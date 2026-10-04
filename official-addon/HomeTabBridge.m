@@ -63,7 +63,7 @@ static void Walk(id obj,UIWindow *window,NSMutableArray *hits,NSHashTable *seen,
     }@catch(NSException *e){/* Unknown container: fail closed, keep official UI. */}
 }
 @implementation TIOHomeTabBridge
-- (instancetype)init{if((self=[super init])){_engines=NSHashTable.weakObjectsHashTable;_state=@"等待官方主页";_enabled=YES;}return self;}
+- (instancetype)init{if((self=[super init])){_engines=NSHashTable.weakObjectsHashTable;_state=@"Waiting for official home page";_enabled=YES;}return self;}
 - (void)schedule{if(_queued)return;_queued=YES;dispatch_after(dispatch_time(DISPATCH_TIME_NOW,150*NSEC_PER_MSEC),dispatch_get_main_queue(),^{self.queued=NO;[self refresh];});}
 - (void)active{self.ensureAttempts=0;self.lastEnsure=0;[self.timer invalidate];__weak typeof(self) weak=self;self.timer=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *t){[weak refresh];}];[self refresh];}
 - (void)inactive{[self.timer invalidate];self.timer=nil;self.bar.hidden=YES;}
@@ -76,7 +76,7 @@ static void Walk(id obj,UIWindow *window,NSMutableArray *hits,NSHashTable *seen,
         self.glass=[[UIVisualEffectView alloc]initWithEffect:nil];self.glass.userInteractionEnabled=NO;self.glass.accessibilityIdentifier=@"turboio-home-glass";self.glass.layer.cornerRadius=29;self.glass.layer.cornerCurve=kCACornerCurveContinuous;self.glass.clipsToBounds=YES;[self.bar addSubview:self.glass];
         self.glassSheen=[CAGradientLayer layer];self.glassSheen.startPoint=CGPointMake(0.2,0);self.glassSheen.endPoint=CGPointMake(0.8,1);[self.glass.contentView.layer addSublayer:self.glassSheen];
         self.selection=[UIView new];self.selection.layer.cornerRadius=24;self.selection.layer.cornerCurve=kCACornerCurveContinuous;self.selection.userInteractionEnabled=NO;[self.bar addSubview:self.selection];
-        NSArray *names=@[@"RayNeo",@"眼镜",@"记忆",@"发现",@"TurboIO"],*icons=@[@"sparkles",@"eyeglasses",@"atom",@"safari",@"bolt.horizontal.circle"];
+        NSArray *names=@[@"RayNeo",@"Glasses",@"Memories",@"Explore",@"TurboIO"],*icons=@[@"sparkles",@"eyeglasses",@"atom",@"safari",@"bolt.horizontal.circle"];
         NSMutableArray *buttons=[NSMutableArray new];for(NSUInteger i=0;i<5;i++){UIButton *b=[UIButton buttonWithType:UIButtonTypeSystem];UIButtonConfiguration *c=UIButtonConfiguration.plainButtonConfiguration;c.title=names[i];c.image=[UIImage systemImageNamed:icons[i] withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:21 weight:UIImageSymbolWeightRegular]];c.imagePlacement=NSDirectionalRectEdgeTop;c.imagePadding=3;c.contentInsets=NSDirectionalEdgeInsetsMake(5,0,4,0);c.titleTextAttributesTransformer=^NSDictionary *(NSDictionary *input){NSMutableDictionary *a=[input mutableCopy];a[NSFontAttributeName]=[UIFont systemFontOfSize:10.5 weight:UIFontWeightMedium];return a;};b.configuration=c;b.tag=i;b.accessibilityLabel=names[i];b.accessibilityIdentifier=[@"home-tab-" stringByAppendingString:names[i]];[b addTarget:self action:@selector(tap:) forControlEvents:UIControlEventTouchUpInside];[self.bar addSubview:b];[buttons addObject:b];}self.buttons=buttons;
         UILongPressGestureRecognizer *restore=[[UILongPressGestureRecognizer alloc]initWithTarget:self action:@selector(restore:)];restore.minimumPressDuration=1.5;[self.buttons.lastObject addGestureRecognizer:restore];
     }if(self.bar.superview!=w)[w addSubview:self.bar];[w bringSubviewToFront:self.bar];
@@ -100,11 +100,11 @@ static void Walk(id obj,UIWindow *window,NSMutableArray *hits,NSHashTable *seen,
 }
 - (void)refresh{
     UIWindow *w=HomeWindow();UIViewController *root=w.rootViewController;
-    if(!w||UIApplication.sharedApplication.applicationState!=UIApplicationStateActive){[self hide:@"应用不在前台" fallback:NO];return;}
-    if(!self.enabled){[self hide:@"已临时恢复官方底栏（重启恢复扩展）" fallback:YES];return;}
-    if(root.presentedViewController||self.keyboardVisible){[self hide:@"详情、弹层或键盘显示中" fallback:NO];return;}
-    if(UIAccessibilityIsVoiceOverRunning()){[self hide:@"VoiceOver：保留官方导航" fallback:YES];return;}
-    UIViewController *flutter=FlutterRoot(root);if(!flutter){[self hide:@"不是官方 Flutter 页面" fallback:YES];return;}
+    if(!w||UIApplication.sharedApplication.applicationState!=UIApplicationStateActive){[self hide:@"App not in foreground" fallback:NO];return;}
+    if(!self.enabled){[self hide:@"Temporarily restored official tab bar (restart app to restore addon)" fallback:YES];return;}
+    if(root.presentedViewController||self.keyboardVisible){[self hide:@"Detail page, modal or keyboard visible" fallback:NO];return;}
+    if(UIAccessibilityIsVoiceOverRunning()){[self hide:@"VoiceOver: Keeping official navigation" fallback:YES];return;}
+    UIViewController *flutter=FlutterRoot(root);if(!flutter){[self hide:@"Not official Flutter page" fallback:YES];return;}
     @try{if([flutter respondsToSelector:NSSelectorFromString(@"engine")]){id engine=((id(*)(id,SEL))objc_msgSend)(flutter,NSSelectorFromString(@"engine"));SEL ensure=NSSelectorFromString(@"ensureSemanticsEnabled");NSTimeInterval now=NSProcessInfo.processInfo.systemUptime;
         // The initial engine/view attachment can reset semantics after launch.
         // Retry only a cold, empty tree, at most ten times per foreground.
@@ -130,9 +130,9 @@ static void Walk(id obj,UIWindow *window,NSMutableArray *hits,NSHashTable *seen,
     hits=resolved;NSArray *candidates=TIOHomeTabCandidates(hits);NSMutableArray *clean=[NSMutableArray new];
     for(NSDictionary *hit in hits){NSMutableDictionary *row=[hit mutableCopy];[row removeObjectForKey:@"object"];[clean addObject:row];}self.items=clean;
     NSDictionary *layout=TIOHomeTabLayout(candidates,w.bounds.size.width,w.bounds.size.height,w.safeAreaInsets.bottom);
-    if(!layout){[self hide:@"等待完整的官方四项导航；未覆盖底栏" fallback:YES];return;}
+    if(!layout){[self hide:@"Waiting for full official 4-item navigation; bottom bar not covered" fallback:YES];return;}
     [self makeBar:w];self.bar.frame=CGRectMake([layout[@"x"] doubleValue],[layout[@"y"] doubleValue],[layout[@"width"] doubleValue],[layout[@"height"] doubleValue]);
-    self.targets=[layout[@"items"] valueForKey:@"object"];self.bar.hidden=NO;self.fallback.hidden=YES;self.state=@"官方四项 + TurboIO";
+    self.targets=[layout[@"items"] valueForKey:@"object"];self.bar.hidden=NO;self.fallback.hidden=YES;self.state=@"Official 4 items + TurboIO";
     for(NSUInteger i=0;i<4;i++){
         UIButton *button=self.buttons[i];NSString *name=layout[@"items"][i][@"name"];
         if(![button.configuration.title isEqual:name]){UIButtonConfiguration *config=[button.configuration copy];config.title=name;button.configuration=config;}
@@ -147,9 +147,9 @@ static void Walk(id obj,UIWindow *window,NSMutableArray *hits,NSHashTable *seen,
     NSUInteger index=button.tag;[self refresh];if(self.bar.hidden||self.targets.count!=4)return;
     if(index==4){self.bar.hidden=YES;if(self.openResearch)self.openResearch();return;}
     if(index>=4)return;id target=self.targets[index];BOOL result=NO;@try{result=[target accessibilityActivate];}@catch(NSException *e){}
-    if(!result){self.enabled=NO;[self hide:@"官方点击未确认，已恢复官方底栏" fallback:YES];return;}self.activations++;[self schedule];
+    if(!result){self.enabled=NO;[self hide:@"Official tap not confirmed, restored official tab bar" fallback:YES];return;}self.activations++;[self schedule];
 }
-- (void)restore:(UILongPressGestureRecognizer *)g{if(g.state==UIGestureRecognizerStateBegan){self.enabled=NO;[self hide:@"已临时恢复官方底栏（重启恢复扩展）" fallback:YES];}}
+- (void)restore:(UILongPressGestureRecognizer *)g{if(g.state==UIGestureRecognizerStateBegan){self.enabled=NO;[self hide:@"Temporarily restored official tab bar (restart app to restore addon)" fallback:YES];}}
 - (NSDictionary *)status{return @{@"revision":@"home-tabs-v6-frosted-glass",@"appearance":self.appearanceKey?:@"",@"ensureAttempts":@(self.ensureAttempts),@"state":self.state?:@"",@"visible":@(self.bar&&!self.bar.hidden),@"treeNodes":@(self.treeCount),@"tabs":self.items?:@[],@"activations":@(self.activations),@"implementation":@"native accessibility navigation adapter"};}
 - (void)writeStatus{NSData *data=[NSJSONSerialization dataWithJSONObject:[self status] options:NSJSONWritingSortedKeys error:nil];NSString *signature=[[NSString alloc]initWithData:data encoding:NSUTF8StringEncoding];if(!signature||[signature isEqual:self.lastWritten])return;self.lastWritten=signature;NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/TurboIOPrivateAddon/HomeTabs-status.json"];[NSFileManager.defaultManager createDirectoryAtPath:path.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:nil];[data writeToFile:path options:NSDataWritingAtomic error:nil];[NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:path error:nil];}
 @end
@@ -157,4 +157,4 @@ void TIOStartHomeTabBridge(UIButton *fallback,void (^openResearch)(void)){
     if(Bridge){Bridge.fallback=fallback;[Bridge refresh];return;}Bridge=[TIOHomeTabBridge new];Bridge.fallback=fallback;Bridge.openResearch=openResearch;
     NSNotificationCenter *n=NSNotificationCenter.defaultCenter;[n addObserver:Bridge selector:@selector(schedule) name:@"FlutterSemanticsUpdateNotification" object:nil];[n addObserver:Bridge selector:@selector(active) name:UIApplicationDidBecomeActiveNotification object:nil];[n addObserver:Bridge selector:@selector(inactive) name:UIApplicationWillResignActiveNotification object:nil];[n addObserver:Bridge selector:@selector(keyboard:) name:UIKeyboardWillChangeFrameNotification object:nil];[n addObserver:Bridge selector:@selector(schedule) name:@"TIOResearchClosed" object:nil];[Bridge active];
 }
-NSDictionary *TIOHomeTabBridgeStatus(void){return Bridge?[Bridge status]:@{@"state":@"尚未初始化"};}
+NSDictionary *TIOHomeTabBridgeStatus(void){return Bridge?[Bridge status]:@{@"state":@"Not initialized"};}

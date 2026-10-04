@@ -2,7 +2,7 @@
 #define TDP_PHONE_DELTA_H
 #include <stdint.h>
 #include <stddef.h>
-enum { TDP_DELTA_WIDTH=512, TDP_DELTA_HEIGHT=128, TDP_DELTA_PIXELS=65536, TDP_DELTA_LIMIT=32 };
+enum { TDP_DELTA_WIDTH=512, TDP_DELTA_HEIGHT=128, TDP_DELTA_PIXELS=65536, TDP_DELTA_LIMIT=64 };
 typedef struct {uint16_t x,y,w,h;} TDPDeltaRect;
 typedef struct {unsigned count;size_t pixels;TDPDeltaRect rects[TDP_DELTA_LIMIT];} TDPDeltaPlan;
 // Phone-only planning. Unchanged TDP1 RECT wire format; no AP modifications.

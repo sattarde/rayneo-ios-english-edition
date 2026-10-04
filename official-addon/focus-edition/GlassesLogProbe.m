@@ -7,7 +7,7 @@
 #import <CommonCrypto/CommonDigest.h>
 static __weak id Plugin;
 static NSDictionary *Route;
-static NSString *Device,*Note=@"尚未请求眼镜日志。请保持官方眼镜连接。";
+static NSString *Device,*Note=@"No logs requested yet. Keep glasses connected.";
 static NSURL *Archive;
 static NSTimeInterval RouteAt,Started;
 static BOOL Copying,Restoring;
@@ -37,8 +37,8 @@ static void Restore(void){
    dispatch_async(dispatch_get_main_queue(),^{Restoring=NO;
      if(valid&&[Gate() reconcileRecoveredTask:receipt[@"task"] device:receipt[@"device"]]&&Save(@"owner.json",Gate().snapshot)){
        Archive=valid;[NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0600,NSFileProtectionKey:NSFileProtectionCompleteUntilFirstUserAuthentication} ofItemAtPath:valid.path error:nil];[valid setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:nil];
-       Changed(recovered?@"已恢复首次日志副本，可分享；SHA256核对通过。首次隔离失败，这不是重新采集。":@"已恢复本地日志副本，可分享；SHA256核对通过。",@{@"recoveredFromMac":@(recovered),@"bytes":receipt[@"bytes"]});
-     }else Changed(raw?@"已有归档恢复凭据，但验证未通过；未重新采集。":owner.count?@"检测到历史任务，尚无可验证副本。未重发，也不是等待两分钟连接。":@"尚未采集。先确认官方眼镜连接，再请求一次。",@{@"restoreFailed":@(raw!=nil)});
+       Changed(recovered?@"Recovered initial log copy, ready to share; SHA-256 verified.":@"Recovered local log copy, ready to share; SHA-256 verified.",@{@"recoveredFromMac":@(recovered),@"bytes":receipt[@"bytes"]});
+     }else Changed(raw?@"Archive recovery credential exists but verification failed; not re-collected.":owner.count?@"Historical task detected; no verifiable copy yet.":@"Not collected yet. First confirm the official glasses connection and then request it again.",@{@"restoreFailed":@(raw!=nil)});
    });
  });
 }
@@ -56,11 +56,11 @@ BOOL TIOGlassesLogConsumeEvent(NSDictionary *event){
  NSDictionary *decision;@synchronized(Gate()){NSDictionary *before=Gate().snapshot;decision=[Gate() accept:event];if(![decision[@"consume"] boolValue])return NO;if(![before isEqual:Gate().snapshot])Save(@"owner.json",Gate().snapshot);}
  NSDictionary *candidate=decision[@"candidate"],*ack=decision[@"ack"];
  dispatch_async(dispatch_get_main_queue(),^{
-   if(ack)Changed(@"已截获眼镜日志任务回执；等待匹配UUID的归档，不转交Flutter",@{@"ackStatus":ack[@"status"],@"hasTaskID":@([ack[@"taskID"] length]>0)});
-   if([decision[@"awaitingAck"] boolValue])Changed(@"归档事件先于回执：已隔离，等待任务UUID核对",@{});
-   if([decision[@"mismatch"] boolValue])Changed(@"日志事件不匹配，已隔离但不复制；没有重试",@{});
+   if(ack)Changed(@"Intercepted glasses log task receipt; waiting for matching UUID archive.",@{@"ackStatus":ack[@"status"],@"hasTaskID":@([ack[@"taskID"] length]>0)});
+   if([decision[@"awaitingAck"] boolValue])Changed(@"Archive event preceded receipt: isolated, waiting for UUID match.",@{});
+   if([decision[@"mismatch"] boolValue])Changed(@"Log event mismatch: isolated, no retry.",@{});
    if(!candidate||Copying||Archive)return;
-   if(!TIOGlassesLogWindowValid(Started,NSDate.date.timeIntervalSince1970,UIApplication.sharedApplication.applicationState==UIApplicationStateActive,YES)){Changed(@"迟到或后台文件事件已隔离，未复制；原文件保留，任务结果未知",@{});return;}
+   if(!TIOGlassesLogWindowValid(Started,NSDate.date.timeIntervalSince1970,UIApplication.sharedApplication.applicationState==UIApplicationStateActive,YES)){Changed(@"Late or background file events have been isolated and not copied; the original file is retained and the task result is unknown",@{});return;}
    Copying=YES;NSURL *dir=Directory(),*home=[NSURL fileURLWithPath:NSHomeDirectory()];
    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
      NSURL *copy=TIOGlassesLogCopy(candidate,home,dir,32*1024*1024);NSMutableDictionary *meta=[NSMutableDictionary new];
@@ -68,34 +68,34 @@ BOOL TIOGlassesLogConsumeEvent(NSDictionary *event){
        NSData *b=[NSData dataWithContentsOfURL:copy options:NSDataReadingMappedIfSafe error:nil];if(b.length){unsigned char hash[CC_SHA256_DIGEST_LENGTH];CC_SHA256(b.bytes,(CC_LONG)b.length,hash);NSMutableString *hex=[NSMutableString new];for(unsigned i=0;i<sizeof(hash);i++)[hex appendFormat:@"%02x",hash[i]];meta[@"bytes"]=@(b.length);meta[@"sha256"]=hex;}else{meta[@"hashReadFailed"]=@YES;}
        meta[@"savedName"]=copy.lastPathComponent;meta[@"formatVerified"]=@NO;
      }
-     dispatch_async(dispatch_get_main_queue(),^{Copying=NO;Archive=copy;if(copy&&meta[@"sha256"]){NSMutableDictionary *receipt=[meta mutableCopy];receipt[@"device"]=Gate().snapshot[@"device"];receipt[@"task"]=Gate().snapshot[@"task"];receipt[@"source"]=@"native-receiver";Save(@"archive.json",receipt);}Changed(copy?@"已保存独立日志副本；原件未删，本模块未上传。压缩格式待Mac核验":@"归档路径/文件校验失败，未保存；原件未删、未重试",meta);});
+     dispatch_async(dispatch_get_main_queue(),^{Copying=NO;Archive=copy;if(copy&&meta[@"sha256"]){NSMutableDictionary *receipt=[meta mutableCopy];receipt[@"device"]=Gate().snapshot[@"device"];receipt[@"task"]=Gate().snapshot[@"task"];receipt[@"source"]=@"native-receiver";Save(@"archive.json",receipt);}Changed(copy?@"A copy of the independent log has been saved; the original has not been deleted and this module has not been uploaded. Compression format to be verified by Mac":@"Archive path/file verification failed, Not Saved; original file not deleted, not retried",meta);});
    });
  });return YES;
 }
 static BOOL Ready(void){return Plugin&&Route&&Device.length&&UIApplication.sharedApplication.applicationState==UIApplicationStateActive&&NSDate.date.timeIntervalSince1970-RouteAt>=0&&NSDate.date.timeIntervalSince1970-RouteAt<120&&!Gate().snapshot.count;}
 static void Start(void){
- if(Archive){Changed(@"本次日志已保存，可点分享；没有重新采集。",@{});return;}
- if(Gate().snapshot.count){Changed(@"本次任务已建立，未重复发送。尚无副本不代表未发送；请保留当前状态，由Mac核对日志。",@{@"alreadyArmed":@YES});return;}
- if(!Ready()){Changed(@"尚未发送：未取得近期官方通信。请回官方首页确认眼镜连接，再进入本页；不是等待两分钟。",@{@"notSubmitted":@YES});return;}
+ if(Archive){Changed(@"Session log saved, ready to share.",@{});return;}
+ if(Gate().snapshot.count){Changed(@"Session task created, not duplicate sent.",@{@"alreadyArmed":@YES});return;}
+ if(!Ready()){Changed(@"Not sent: no recent official communication. Confirm connection on official home page.",@{@"notSubmitted":@YES});return;}
  Class typed=NSClassFromString(@"FlutterStandardTypedData"),cls=NSClassFromString(@"FlutterMethodCall");SEL make=NSSelectorFromString(@"methodCallWithMethodName:arguments:"),bytes=NSSelectorFromString(@"typedDataWithBytes:"),handle=NSSelectorFromString(@"handleMethodCall:result:");
- if(![typed respondsToSelector:bytes]||![cls respondsToSelector:make]||![Plugin respondsToSelector:handle]){Changed(@"未发送：官方传输ABI不可用",@{});return;}
+ if(![typed respondsToSelector:bytes]||![cls respondsToSelector:make]||![Plugin respondsToSelector:handle]){Changed(@"Not sent: official transport ABI not available",@{});return;}
  uint32_t seq=arc4random_uniform(0x3fffffff)+1;NSData *packet=TIOA2UIPacket(16,seq,@{@"cmd":@"start_log_task",@"payload":@{@"value":@0,@"mode":@0,@"data":@""}});
  NSMutableDictionary *a=[Route mutableCopy];a[@"businessId"]=@11;a[@"payload"]=((id(*)(id,SEL,id))objc_msgSend)(typed,bytes,packet);id call=((id(*)(id,SEL,id,id))objc_msgSend)(cls,make,@"rayneonet_sendMessage",a);
- if(![Gate() beginForDevice:Device]||!Save(@"owner.json",Gate().snapshot)){Changed(@"未发送：无法建立持久化隔离记录",@{});return;}
- Started=NSDate.date.timeIntervalSince1970;Changed(@"已请求一次眼镜日志，等待回执；180秒接收窗口，不自动重试",@{@"sequence":@(seq)});
- OwnCall=(__bridge void *)call;@try{((void(*)(id,SEL,id,id))objc_msgSend)(Plugin,handle,call,[^(id r){BOOL accepted=[r isKindOfClass:NSDictionary.class]&&[r[@"success"] isEqual:@YES];Changed(accepted?@"SDK接收了请求，仍需眼镜回执和归档":@"SDK回调未确认成功，结果未知；不重试，隔离保留",@{@"transportAccepted":@(accepted)});} copy]);}@catch(NSException *e){Changed(@"发送调用异常，结果未知；隔离保留，不重试",@{});}@finally{OwnCall=NULL;}
- dispatch_after(dispatch_time(DISPATCH_TIME_NOW,180*NSEC_PER_SEC),dispatch_get_main_queue(),^{if(!Archive&&!Copying)Changed(@"180秒未保存归档，结果未知。未取消眼镜任务；迟到事件继续隔离，不重试",@{});});
+ if(![Gate() beginForDevice:Device]||!Save(@"owner.json",Gate().snapshot)){Changed(@"Not sent: cannot establish persistent isolation record.",@{});return;}
+ Started=NSDate.date.timeIntervalSince1970;Changed(@"Requested glasses log once; 180s receive window, no auto-retry.",@{@"sequence":@(seq)});
+ OwnCall=(__bridge void *)call;@try{((void(*)(id,SEL,id,id))objc_msgSend)(Plugin,handle,call,[^(id r){BOOL accepted=[r isKindOfClass:NSDictionary.class]&&[r[@"success"] isEqual:@YES];Changed(accepted?@"SDK received the request, still requires glasses receipt and archiving":@"The SDK callback is not confirmed as successful and the result is unknown; no retry and isolation is retained.",@{@"transportAccepted":@(accepted)});} copy]);}@catch(NSException *e){Changed(@"Send call exception, result unknown; isolated and retained, no retry",@{});}@finally{OwnCall=NULL;}
+ dispatch_after(dispatch_time(DISPATCH_TIME_NOW,180*NSEC_PER_SEC),dispatch_get_main_queue(),^{if(!Archive&&!Copying)Changed(@"Not Saved archived in 180 seconds, the result is unknown. The glasses task has not been canceled; late events will continue to be isolated and will not be retried.",@{});});
 }
 @interface TIOGlassesLogPanel:UITableViewController @end
 @implementation TIOGlassesLogPanel
-- (void)viewDidLoad{[super viewDidLoad];self.title=@"眼镜日志 · 仅本机";[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:@"TIOGlassesLogChanged" object:nil];Restore();}
+- (void)viewDidLoad{[super viewDidLoad];self.title=@"Glasses Logs · Device Only";[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:@"TIOGlassesLogChanged" object:nil];Restore();}
 - (void)dealloc{[NSNotificationCenter.defaultCenter removeObserver:self];}
 - (void)refresh{[self.tableView reloadData];}
 - (NSInteger)tableView:(UITableView *)v numberOfRowsInSection:(NSInteger)s{return 3;}
-- (UITableViewCell *)tableView:(UITableView *)v cellForRowAtIndexPath:(NSIndexPath *)p{UITableViewCell *c=[[UITableViewCell alloc]initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];c.textLabel.text=@[@"当前状态 · log-local-v2",@"请求一次眼镜日志",@"分享已保存副本"][p.row];c.textLabel.numberOfLines=c.detailTextLabel.numberOfLines=0;c.accessibilityIdentifier=[NSString stringWithFormat:@"glasses-log-%ld",(long)p.row];if(p.row==0)c.detailTextLabel.text=[NSString stringWithFormat:@"%@\n发送上下文：%@\n任务记录：%@",Note,Ready()?@"可用":@"不可用",Gate().snapshot.count?@"已建立（跨重启保留）":@"未建立"];return c;}
-- (NSString *)tableView:(UITableView *)v titleForFooterInSection:(NSInteger)s{return @"仅研究日志路径。测试前请关闭手机互联网但保留蓝牙，结束录音/提词/对话；不要同时点官方反馈或日志上传。隔离只覆盖本次日志事件，不是全App网络防火墙。任务只允许一次，超时不代表眼镜停止。隔离记录跨重启保留。收齐匹配文件后放行新的官方日志任务；结果未知时仍阻止重复打包，不影响其他业务。";}
+- (UITableViewCell *)tableView:(UITableView *)v cellForRowAtIndexPath:(NSIndexPath *)p{UITableViewCell *c=[[UITableViewCell alloc]initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];c.textLabel.text=@[@"Current status · log-local-v2",@"Request a glasses log",@"Share a saved copy"][p.row];c.textLabel.numberOfLines=c.detailTextLabel.numberOfLines=0;c.accessibilityIdentifier=[NSString stringWithFormat:@"glasses-log-%ld",(long)p.row];if(p.row==0)c.detailTextLabel.text=[NSString stringWithFormat:@"%@\nSending context: %@\nTask record: %@",Note,Ready()?@"Available":@"Not available",Gate().snapshot.count?@"Established (preserved across reboots)":@"Not created"];return c;}
+- (NSString *)tableView:(UITableView *)v titleForFooterInSection:(NSInteger)s{return @"Investigate log paths only. Before testing, please turn off the Internet on your mobile phone but keep Bluetooth, and end the recording/prompt/conversation; do not click on official feedback or log upload at the same time. Isolation only covers this log event and is not a full-App network firewall. The task is only allowed once, and timeout does not mean that the glasses stop. Quarantine records are retained across reboots. New official log tasks are released after all matching files are collected; when the results are unknown, repeated packaging is still prevented and other businesses are not affected.";}
 - (void)tableView:(UITableView *)v didSelectRowAtIndexPath:(NSIndexPath *)p{[v deselectRowAtIndexPath:p animated:YES];if(!p.row){[self refresh];return;}if(p.row==2){if(!Archive){Restore();return;}UIActivityViewController *a=[[UIActivityViewController alloc]initWithActivityItems:@[Archive] applicationActivities:nil];a.popoverPresentationController.sourceView=self.view;a.popoverPresentationController.sourceRect=CGRectMake(20,100,1,1);[self presentViewController:a animated:YES completion:nil];return;}
- UIAlertController *a=[UIAlertController alertControllerWithTitle:@"仅本机日志验收？" message:@"先关闭手机互联网、保留蓝牙，并结束其他眼镜任务。此操作会让眼镜生成日志归档；可能包含私人信息。扩展接收本次任务，不调用上传、不自动解压、不删除原件。未恢复前请勿操作官方日志反馈。" preferredStyle:UIAlertControllerStyleAlert];[a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];[a addAction:[UIAlertAction actionWithTitle:@"已断互联网，开始一次" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){Start();}]];[self presentViewController:a animated:YES completion:nil];
+ UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Device-Only Log Verification?" message:@"First turn off the mobile Internet, keep Bluetooth, and end other glasses tasks. This action causes Glass to generate a log archive; which may contain private information. The extension accepts this task, does not call upload, does not automatically decompress, and does not delete the original. Please do not operate the official log feedback before recovery." preferredStyle:UIAlertControllerStyleAlert];[a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];[a addAction:[UIAlertAction actionWithTitle:@"The Internet has been disconnected, start again" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){Start();}]];[self presentViewController:a animated:YES completion:nil];
 }
 @end
 UIViewController *TIOGlassesLogController(void){return [[TIOGlassesLogPanel alloc]initWithStyle:UITableViewStyleInsetGrouped];}

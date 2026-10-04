@@ -23,7 +23,7 @@ NSArray<NSDictionary *> *TIOPreparedAudioFiles(NSURL *home){
     }
     [rows sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [b[@"date"] compare:a[@"date"]];}];return rows;
 }
-static NSError *Fail(void){return [NSError errorWithDomain:@"TurboIORecordingExport" code:1 userInfo:@{NSLocalizedDescriptionKey:@"无法准备分享副本，原文件没有修改。若官方正在转换，请完成后再试。"}];}
+static NSError *Fail(void){return [NSError errorWithDomain:@"TurboIORecordingExport" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Unable to prepare a copy for sharing, the original file has not been modified. If the official conversion is in progress, please try again after completion."}];}
 static NSURL *ExportDirectory(NSURL *home,NSError **error){
     NSURL *base=[home URLByAppendingPathComponent:@"Library/Caches/TurboIOPrivateExports" isDirectory:YES];
     NSFileManager *fm=NSFileManager.defaultManager;
@@ -50,8 +50,8 @@ NSURL *TIOAudioShareCopy(NSURL *home,NSURL *source,NSError **error){
 NSURL *TIOMarkdownShareFile(NSURL *home,NSString *title,NSString *text,NSError **error){
     if(![text isKindOfClass:NSString.class]||!text.length||text.length>2000000||![title isKindOfClass:NSString.class]||title.length>200){if(error)*error=Fail();return nil;}
     NSString *clean=[[title componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet] componentsJoinedByString:@" "];
-    NSString *md=[NSString stringWithFormat:@"# %@\n\n%@\n",clean.length?clean:@"录音转写",text];
-    NSURL *dir=ExportDirectory(home,error);if(!dir)return nil;NSURL *file=[dir URLByAppendingPathComponent:@"录音转写.md"];
+    NSString *md=[NSString stringWithFormat:@"# %@\n\n%@\n",clean.length?clean:@"Recording Transcription",text];
+    NSURL *dir=ExportDirectory(home,error);if(!dir)return nil;NSURL *file=[dir URLByAppendingPathComponent:@"Recording Transcription.md"];
     if(![md writeToURL:file atomically:YES encoding:NSUTF8StringEncoding error:error])return nil;
     [NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:file.path error:nil];return file;
 }

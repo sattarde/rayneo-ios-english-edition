@@ -14,12 +14,12 @@ NSArray<NSDictionary *> *TIOAOAudioFiles(NSURL *home){
         if([v[NSURLIsSymbolicLinkKey] boolValue]||!Inside(f,root)){[files skipDescendants];continue;}
         if([v[NSURLIsDirectoryKey] boolValue]){if(f.pathComponents.count>root.pathComponents.count+2)[files skipDescendants];continue;}
         if(![@[@"opus",@"ogg",@"pcm"] containsObject:f.pathExtension.lowercaseString]||!Regular(f))continue;
-        NSString *name=f.lastPathComponent;NSString *kind=[name.lowercaseString containsString:@"cached"]?@"缓存音频":([name.lowercaseString containsString:@"realtime"]?@"实时音频":@"智记调试音频（来源待核对）");
+        NSString *name=f.lastPathComponent;NSString *kind=[name.lowercaseString containsString:@"cached"]?@"cache audio":([name.lowercaseString containsString:@"realtime"]?@"real time audio":@"Zhiji debugging audio (source to be verified)");
         [rows addObject:@{@"url":f,@"name":name,@"kind":kind,@"date":v[NSURLContentModificationDateKey]?:NSDate.distantPast,@"bytes":v[NSURLFileSizeKey]?:@0}];if(rows.count>=500)break;
     }
     [rows sortUsingComparator:^NSComparisonResult(id a,id b){return [b[@"date"] compare:a[@"date"]];}];return rows;
 }
-static NSError *AudioError(void){return [NSError errorWithDomain:@"TurboIOAlwaysOnAudio" code:1 userInfo:@{NSLocalizedDescriptionKey:@"无法生成稳定的智记音频副本。请先停止本次全天智记，再刷新重试；原文件未改。"}];}
+static NSError *AudioError(void){return [NSError errorWithDomain:@"TurboIOAlwaysOnAudio" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Unable to generate stable copy of Zhiji audio. Please stop this all-day journal first, then refresh and try again; the original file has not been changed."}];}
 NSURL *TIOAOAudioCopy(NSURL *home,NSURL *source,NSError **error){
     if(!source.isFileURL||!Regular(source)){if(error)*error=AudioError();return nil;}
     BOOL found=NO;for(NSDictionary *r in TIOAOAudioFiles(home))if([[(NSURL *)r[@"url"] URLByResolvingSymlinksInPath].path isEqual:[source URLByResolvingSymlinksInPath].path])found=YES;
@@ -29,7 +29,7 @@ NSURL *TIOAOAudioCopy(NSURL *home,NSURL *source,NSError **error){
     if([NSFileManager.defaultManager fileExistsAtPath:base.path]&&!Dir(base)){close(in);if(error)*error=AudioError();return nil;}
     if(![NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:error]){close(in);return nil;}
     // Keep the actual format extension. Raw PCM is never renamed into fake WAV.
-    NSURL *outURL=[folder URLByAppendingPathComponent:[@"全天智记音频." stringByAppendingString:source.pathExtension.lowercaseString]];
+    NSURL *outURL=[folder URLByAppendingPathComponent:[@"All-day audio recording." stringByAppendingString:source.pathExtension.lowercaseString]];
     int out=open(outURL.fileSystemRepresentation,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0600);BOOL ok=out>=0;off_t copied=0;char buffer[65536];
     while(ok){ssize_t n=read(in,buffer,sizeof(buffer));if(!n)break;if(n<0){ok=NO;break;}copied+=n;if(copied>before.st_size){ok=NO;break;}for(ssize_t at=0;at<n;){ssize_t k=write(out,buffer+at,n-at);if(k<=0){ok=NO;break;}at+=k;}}
     ok=ok&&!fstat(in,&after)&&!lstat(source.fileSystemRepresentation,&pathAfter)&&before.st_size==copied&&before.st_size==after.st_size&&before.st_ino==pathAfter.st_ino&&before.st_dev==pathAfter.st_dev&&before.st_mtimespec.tv_sec==after.st_mtimespec.tv_sec&&before.st_mtimespec.tv_nsec==after.st_mtimespec.tv_nsec;

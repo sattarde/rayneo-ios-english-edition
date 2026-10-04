@@ -42,9 +42,9 @@ UIImage *TDPHUDPreview(NSDictionary *d){
    NSString *text=[[values[i] componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet] componentsJoinedByString:@" "];
    [text drawInRect:CGRectMake(100,ys[i],292,heights[i]) withAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:sizes[i] weight:UIFontWeightSemibold],NSForegroundColorAttributeName:UIColor.whiteColor,NSParagraphStyleAttributeName:style}];
   }
-  [@"高德 HUD · 模拟验收 · 勿用于道路行驶" drawInRect:CGRectMake(100,109,402,16) withAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:11],NSForegroundColorAttributeName:UIColor.whiteColor}];
+  [@"Google HUD · Simulation Test · Do Not Use On Road" drawInRect:CGRectMake(100,109,402,16) withAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:11],NSForegroundColorAttributeName:UIColor.whiteColor}];
   UIImage *cross=FromPixels(d[@"crossPixels"],100,64);
   if(cross)[cross drawInRect:CGRectMake(408,20,100,64)];
-  [(cross?@"路口图":@"无路口图") drawAtPoint:CGPointMake(412,90) withAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:12],NSForegroundColorAttributeName:UIColor.lightGrayColor}];
+  [(cross?@"Junction View":@"No Junction View") drawAtPoint:CGPointMake(412,90) withAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:12],NSForegroundColorAttributeName:UIColor.lightGrayColor}];
  }];
 }

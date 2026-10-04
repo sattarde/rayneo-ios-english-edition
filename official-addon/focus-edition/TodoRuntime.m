@@ -25,7 +25,7 @@
 static void (*PriorMethod)(id,SEL,id,id);
 static void (*PriorSend)(id,SEL,id,id,id);
 static NSDictionary *Snapshot,*Baseline;
-static NSString *Device,*TestTitle,*TestWire,*TestDevice,*State=@"尚未观察到官方待办列表";
+static NSString *Device,*TestTitle,*TestWire,*TestDevice,*State=@"No official backlog observed yet";
 static NSTimeInterval SnapshotAt,TemplateAt;
 static id Template;
 static __weak id Listener;
@@ -45,6 +45,91 @@ static NSData *Data(id v){if([v isKindOfClass:NSData.class])return v;if([NSStrin
 static NSString *Text(id o){return [o isKindOfClass:NSString.class]?o:@"";}
 static NSDictionary *Task(id params){if(![params isKindOfClass:NSDictionary.class])return nil;id t=params[@"task"];if([t isKindOfClass:NSString.class]&&[t length]<65536)t=[NSJSONSerialization JSONObjectWithData:[t dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];return [t isKindOfClass:NSDictionary.class]?t:nil;}
 static BOOL Sign(Method m,NSUInteger n){if(!m||method_getNumberOfArguments(m)!=n)return NO;char *r=method_copyReturnType(m);BOOL ok=r&&r[0]=='v';free(r);for(NSUInteger i=2;i<n;i++){char *t=method_copyArgumentType(m,(unsigned)i);ok=ok&&t&&t[0]=='@';free(t);}return ok;}
+static NSArray *LoadCompletedTasks(void){
+    NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/TurboIOPrivateAddon"];
+    NSURL *url=[NSURL fileURLWithPath:[dir stringByAppendingPathComponent:@"todo-completed-tasks.json"]];
+    NSData *data=[NSData dataWithContentsOfURL:url];
+    if(!data.length)return @[];
+    NSArray *arr=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    return [arr isKindOfClass:NSArray.class]?arr:@[];
+}
+static void SaveEvidence(void);
+static void RecordPhysicalCompletion(NSDictionary *physical){
+    if(![physical isKindOfClass:NSDictionary.class])return;
+    NSString *wireId=[NSString stringWithFormat:@"%@", physical[@"wireId"]?:@""];
+    if(!wireId.length)return;
+    NSInteger status=[physical[@"status"] integerValue];
+    NSString *deviceId=Text(physical[@"deviceId"]);
+    NSString *stamp=Text(physical[@"rawModifiedTime"]);
+
+    NSString *matchedTitle=nil;
+    if(Snapshot&&[Snapshot[@"items"] isKindOfClass:NSArray.class]){
+        NSMutableArray *updatedItems=[NSMutableArray array];
+        for(NSDictionary *item in Snapshot[@"items"]){
+            NSMutableDictionary *mItem=[item mutableCopy];
+            if([[NSString stringWithFormat:@"%@", mItem[@"wireId"]] isEqualToString:wireId]){
+                matchedTitle=mItem[@"title"];
+                mItem[@"status"]=@(status);
+            }
+            [updatedItems addObject:mItem];
+        }
+        NSMutableDictionary *newSnap=[Snapshot mutableCopy];
+        newSnap[@"items"]=updatedItems;
+        Snapshot=newSnap;
+    }
+
+    NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/TurboIOPrivateAddon"];
+    [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:nil];
+    NSURL *completedURL=[NSURL fileURLWithPath:[dir stringByAppendingPathComponent:@"todo-completed-tasks.json"]];
+
+    NSMutableArray *completedList=[NSMutableArray array];
+    NSData *existingData=[NSData dataWithContentsOfURL:completedURL];
+    if(existingData.length){
+        NSArray *arr=[NSJSONSerialization JSONObjectWithData:existingData options:0 error:nil];
+        if([arr isKindOfClass:NSArray.class])[completedList addObjectsFromArray:arr];
+    }
+
+    BOOL found=NO;
+    for(NSUInteger i=0;i<completedList.count;i++){
+        NSDictionary *entry=completedList[i];
+        if([[NSString stringWithFormat:@"%@", entry[@"wireId"]] isEqualToString:wireId]){
+            NSMutableDictionary *updatedEntry=[entry mutableCopy];
+            updatedEntry[@"status"]=@(status);
+            updatedEntry[@"completed"]=@(status==1);
+            updatedEntry[@"lastUpdated"]=@([NSDate.date timeIntervalSince1970]);
+            if(matchedTitle.length)updatedEntry[@"title"]=matchedTitle;
+            completedList[i]=updatedEntry;
+            found=YES;
+            break;
+        }
+    }
+    if(!found){
+        NSString *taskTitle=matchedTitle.length?matchedTitle:[NSString stringWithFormat:@"Task #%@", wireId];
+        [completedList insertObject:@{
+            @"wireId":wireId,
+            @"title":taskTitle,
+            @"status":@(status),
+            @"completed":@(status==1),
+            @"completedAt":@([NSDate.date timeIntervalSince1970]),
+            @"deviceId":deviceId?:@"",
+            @"rawModifiedTime":stamp?:@""
+        } atIndex:0];
+    }
+
+    NSData *outData=[NSJSONSerialization dataWithJSONObject:completedList options:NSJSONWritingPrettyPrinted error:nil];
+    [outData writeToURL:completedURL options:NSDataWritingAtomic error:nil];
+    [NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:completedURL.path error:nil];
+
+    PhysicalComplete=(status==1);
+    TestWire=wireId;
+    TestTitle=matchedTitle?:[NSString stringWithFormat:@"Task #%@", wireId];
+    if(status==1){
+        State=[NSString stringWithFormat:@"Task '%@' marked COMPLETE via glasses tap (ID: %@)", TestTitle, wireId];
+    } else {
+        State=[NSString stringWithFormat:@"Task '%@' marked INCOMPLETE via glasses tap (ID: %@)", TestTitle, wireId];
+    }
+    SaveEvidence();
+}
 static void SaveEvidence(void){
     // No official transcript or unrelated tasks. Only the named test and metadata.
     NSMutableDictionary *row=[@{@"state":State?:@"",@"snapshots":@(Snapshots),@"taskEvents":@(TaskEvents),@"physicalEvents":@(PhysicalEvents),@"testTitle":TestTitle?:@"",@"testWireId":TestWire?:@"",@"physicalComplete":@(PhysicalComplete),@"time":@([NSDate.date timeIntervalSince1970])} mutableCopy];
@@ -57,12 +142,12 @@ static void ObserveSnapshot(NSDictionary *args){
     if(![args isKindOfClass:NSDictionary.class]||![args[@"businessId"] isEqual:@22])return;NSDictionary *s=TIOTodoSnapshot(Data(args[@"payload"]));
     NSString *device=Text(args[@"deviceId"]);if(!s||!device.length||device.length>200)return;
     Snapshots++;BOOL full=[s[@"isLastBatch"] boolValue]&&[s[@"total"] unsignedIntegerValue]==[s[@"items"] count];
-    if(!full){Snapshot=nil;State=@"收到分批列表，未将其当作全量基线";SaveEvidence();return;}
-    if(Busy){if(![device isEqual:TestDevice]){Busy=NO;State=@"设备发生变化；测试停止，未绑定";if(ToolOperation)CompleteTool(@"unknown");}
-        else{NSDictionary *candidate=TIOTodoNewCandidate(Baseline,s,TestTitle);if(candidate){TestWire=candidate[@"wireId"];Busy=NO;State=@"官方列表出现唯一新项，已关联真实ID；仍需镜片验收";if(ToolOperation){[NSUserDefaults.standardUserDefaults removeObjectForKey:UnresolvedKey];[NSUserDefaults.standardUserDefaults synchronize];CompleteTool(@"created");}}}
+    if(!full){Snapshot=nil;State=@"Received batch list but did not treat it as full baseline";SaveEvidence();return;}
+    if(Busy){if(![device isEqual:TestDevice]){Busy=NO;State=@"Device changed; test stopped, not bound";if(ToolOperation)CompleteTool(@"unknown");}
+        else{NSDictionary *candidate=TIOTodoNewCandidate(Baseline,s,TestTitle);if(candidate){TestWire=candidate[@"wireId"];Busy=NO;State=@"The only new item appears in the official list, which has been associated with a real ID; lens acceptance is still required.";if(ToolOperation){[NSUserDefaults.standardUserDefaults removeObjectForKey:UnresolvedKey];[NSUserDefaults.standardUserDefaults synchronize];CompleteTool(@"created");}}}
     }
     Snapshot=s;Device=device;SnapshotAt=[NSDate.date timeIntervalSince1970];
-    if(!Busy&&!TestWire.length)State=Template?@"已取得官方列表与新增模板；可测试创建入口":@"已取得官方全量列表基线；等待官方语音新增模板";SaveEvidence();
+    if(!Busy&&!TestWire.length)State=Template?@"The official list and new templates have been obtained; the creation entrance can be tested":@"The official full list baseline has been obtained; waiting for the official voice template to be added";SaveEvidence();
 }
 static void MethodHook(id self,SEL cmd,id call,id result){
     BOOL otaBlocked=TIOOTAFlashBlockCall(call);
@@ -71,7 +156,7 @@ static void MethodHook(id self,SEL cmd,id call,id result){
 #endif
     if(otaBlocked){if(result)((void(^)(id))result)(@{@"success":@NO,@"message":@"Turbo IO transfer gate: not authorized or packet mismatch"});return;}
     if(TIOOTABlockPreparationCall(call)){if(result)((void(^)(id))result)(@{@"success":@NO,@"message":@"Turbo IO OTA preparation only: outbound traffic blocked"});return;}
-    if(TIOGlassesLogBlockCall(call)){if(result)((void(^)(id))result)(@{@"success":@NO,@"message":@"本机日志研究任务隔离中，未重复请求"});return;}
+    if(TIOGlassesLogBlockCall(call)){if(result)((void(^)(id))result)(@{@"success":@NO,@"message":@"The local log research task is in isolation and has no repeated requests."});return;}
     {NSString *method=Get(call,@"method");id args=Get(call,@"arguments");if([args isKindOfClass:NSDictionary.class]){void(^work)(void)=^{TIOProtocolObserveCall(self,method,args);TIONewsTeleObserveCall(self,method,args);TIOA2UIObserveCall(self,method,args);TIOGlassesLogObserveCall(self,method,args);TIONavObserveCall(self,method,args);TIOSubtitleObserveCall(self,method,args);};if(NSThread.isMainThread)work();else dispatch_async(dispatch_get_main_queue(),work);}}
     if([Get(call,@"method") isEqual:@"rayneonet_sendMessage"]){id args=Get(call,@"arguments");if([args isKindOfClass:NSDictionary.class]&&[args[@"businessId"] isEqual:@22]){void (^work)(void)=^{ObserveSnapshot(args);};if(NSThread.isMainThread)work();else dispatch_async(dispatch_get_main_queue(),work);}}
     id args=Get(call,@"arguments");
@@ -114,7 +199,7 @@ static void Send(id self,SEL cmd,NSString *channel,NSData *message,id reply){
                     if(NSThread.isMainThread)work();else dispatch_async(dispatch_get_main_queue(),work);return;
                 }
                 dispatch_async(dispatch_get_main_queue(),^{TIOProtocolObserveEvent(e);TIONewsTeleObserveEvent(e);TIOA2UIObserveEvent(e);TIONavObserveEvent(e);TIOSubtitleObserveEvent(e);});
-                if(physical)dispatch_async(dispatch_get_main_queue(),^{PhysicalEvents++;if(TestWire.length&&[physical[@"wireId"] isEqual:TestWire]&&[physical[@"deviceId"] isEqual:TestDevice]){PhysicalComplete=[physical[@"status"] isEqual:@1];State=PhysicalComplete?@"收到此测试项的眼镜完成回传，真实ID匹配":@"收到此测试项的眼镜未完成回传";SaveEvidence();}});
+                if(physical)dispatch_async(dispatch_get_main_queue(),^{PhysicalEvents++;RecordPhysicalCompletion(physical);});
             }
         }}@catch(NSException *e){}
     }PriorSend(self,cmd,channel,message,reply);
@@ -122,8 +207,8 @@ static void Send(id self,SEL cmd,NSString *channel,NSData *message,id reply){
 void TIOTodoObserveNlp(id listener,id response){
     if(Injecting||!Installed||![Get(response,@"domain") isEqual:@"task"]||![Get(response,@"intent") isEqual:@"create_task"]||![Get(response,@"finished") boolValue]||[Get(response,@"offline") boolValue])return;
     TaskEvents++;id command=Get(response,@"command"),params=Get(command,@"params");
-    if(![Get(command,@"name") isEqual:@"create_task"]||!TIOTodoCreateIntent(@"task",@"create_task",params)){State=@"已收到官方新增回调，但参数形状不匹配；禁止构造调用";SaveEvidence();return;}
-    Template=response;Listener=listener;TemplateAt=[NSDate.date timeIntervalSince1970];State=@"已取得真实官方新增模板；可执行一次命名测试";SaveEvidence();
+    if(![Get(command,@"name") isEqual:@"create_task"]||!TIOTodoCreateIntent(@"task",@"create_task",params)){State=@"The official new callback has been received, but the parameter shapes do not match; construction calls are prohibited";SaveEvidence();return;}
+    Template=response;Listener=listener;TemplateAt=[NSDate.date timeIntervalSince1970];State=@"The real official new template has been obtained; a naming test can be performed";SaveEvidence();
 }
 NSDictionary *TIOTodoRuntimeStatus(void){return @{@"installed":@(Installed),@"snapshots":@(Snapshots),@"taskEvents":@(TaskEvents),@"physicalEvents":@(PhysicalEvents),@"hasBaseline":@(Snapshot!=nil),@"hasTemplate":@(Template!=nil&&Listener!=nil),@"busy":@(Busy),@"state":State?:@"",@"testTitle":TestTitle?:@"",@"hasWireId":@(TestWire.length>0),@"physicalComplete":@(PhysicalComplete)};}
 void TIOTodoCreateFromTool(NSString *title,void (^completion)(NSDictionary *result)){
@@ -150,53 +235,138 @@ void TIOTodoCreateFromTool(NSString *title,void (^completion)(NSDictionary *resu
     // Crash/restart cannot silently retry an uncertain native submission.
     [NSUserDefaults.standardUserDefaults setBool:YES forKey:UnresolvedKey];if(![NSUserDefaults.standardUserDefaults synchronize]){completion(@{@"status":@"rejected"});return;}
     Baseline=Snapshot;TestDevice=Device;TestTitle=[title copy];TestWire=nil;PhysicalComplete=NO;ToolOperation=YES;ToolCompletion=[completion copy];Busy=YES;
-    State=@"create_todo已调用官方入口；等待真实列表，不宣称创建成功";SaveEvidence();
+    State=@"create_todo has called the official entrance; waiting for the real list and not claiming that the creation was successful";SaveEvidence();
     ToolDispatching=YES;Injecting=YES;
     @try{((void(*)(id,SEL,id))objc_msgSend)(ChatListener,NSSelectorFromString(@"onNlpResult:"),response);}
-    @catch(NSException *e){Busy=NO;State=@"create_todo调用异常，结果未知；禁止重试";CompleteTool(@"unknown");SaveEvidence();}
+    @catch(NSException *e){Busy=NO;State=@"Create_todo call exception, the result is unknown; retry is prohibited";CompleteTool(@"unknown");SaveEvidence();}
     @finally{ToolDispatching=NO;Injecting=NO;}
     NSString *operationTitle=TestTitle;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,25*NSEC_PER_SEC),dispatch_get_main_queue(),^{if(Busy&&ToolOperation&&TestTitle==operationTitle){Busy=NO;State=@"create_todo未确认唯一新ID，结果未知；禁止重试";CompleteTool(@"unknown");SaveEvidence();}});
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,25*NSEC_PER_SEC),dispatch_get_main_queue(),^{if(Busy&&ToolOperation&&TestTitle==operationTitle){Busy=NO;State=@"create_todo does not confirm unique new ID, result unknown; retry prohibited";CompleteTool(@"unknown");SaveEvidence();}});
 }
 NSString *TIOTodoCreateTestTask(void){
-    if(!NSThread.isMainThread||!Installed)return @"待办观察入口未就绪。";
-    if(Busy||TestTitle.length)return @"本进程已提交过一次测试；不会自动重试或重复创建。";
+    if(!NSThread.isMainThread||!Installed)return @"The pending observation portal is not ready.";
+    if(Busy||TestTitle.length)return @"This process has already been submitted to testing once; it will not be automatically retried or re-created.";
     NSTimeInterval now=[NSDate.date timeIntervalSince1970];
-    if(!Snapshot||now-SnapshotAt>120||!Template||!Listener||now-TemplateAt>120)return @"请先用眼镜语音新增一条专用测试待办，再在两分钟内回此页测试。";
-    NSString *title=[@"Turbo桥接入口测试 " stringByAppendingString:[NSUUID.UUID.UUIDString substringToIndex:6]];
+    if(!Snapshot||now-SnapshotAt>120||!Template||!Listener||now-TemplateAt>120)return @"Please use Glass Voice to add a special test to-do first, and then return to this page within two minutes to test.";
+    NSString *title=[@"Turbo bridge entry test" stringByAppendingString:[NSUUID.UUID.UUIDString substringToIndex:6]];
     id sourceCommand=Get(Template,@"command");NSDictionary *sourceParams=Get(sourceCommand,@"params"),*task=Task(sourceParams);
-    if(!task||!TIOTodoCreateIntent(@"task",@"create_task",sourceParams))return @"参数形状不匹配，未调用。";
-    Class responseClass=NSClassFromString(@"RayNeoNlpResultWrapper"),commandClass=NSClassFromString(@"NlpCommandWrapper");if(![Template isKindOfClass:responseClass]||![sourceCommand isKindOfClass:commandClass])return @"官方包装类型不匹配。";
-    id response=[responseClass new],command=[commandClass new];if(!response||!command)return @"无法构造官方包装，未调用。";
+    if(!task||!TIOTodoCreateIntent(@"task",@"create_task",sourceParams))return @"Parameter shape mismatch, not called.";
+    Class responseClass=NSClassFromString(@"RayNeoNlpResultWrapper"),commandClass=NSClassFromString(@"NlpCommandWrapper");if(![Template isKindOfClass:responseClass]||![sourceCommand isKindOfClass:commandClass])return @"Official packaging type does not match.";
+    id response=[responseClass new],command=[commandClass new];if(!response||!command)return @"Unable to construct official wrapper, not called.";
     @try{
         for(NSString *field in @[@"sub",@"dialogId",@"sessionId",@"domain",@"intent",@"round",@"query",@"spoken",@"answer",@"finished",@"offline",@"hasNextRound",@"rawData"]){id value=Get(Template,field);if(value)[response setValue:value forKey:field];}
         NSMutableDictionary *inner=[task mutableCopy];inner[@"content"]=title;NSMutableDictionary *params=[sourceParams mutableCopy];
         params[@"task"]=[sourceParams[@"task"] isKindOfClass:NSString.class]?[[NSString alloc]initWithData:[NSJSONSerialization dataWithJSONObject:inner options:0 error:nil] encoding:NSUTF8StringEncoding]:inner;
         [command setValue:@"create_task" forKey:@"name"];[command setValue:params forKey:@"params"];[command setValue:NSUUID.UUID.UUIDString forKey:@"commandRequestId"];[command setValue:Get(sourceCommand,@"otherState")?:@{} forKey:@"otherState"];
-        [response setValue:command forKey:@"command"];[response setValue:[@"创建待办 " stringByAppendingString:title] forKey:@"query"];[response setValue:@"" forKey:@"answer"];[response setValue:@"" forKey:@"spoken"];
-    }@catch(NSException *e){return @"包装属性不匹配，未调用。";}
-    Baseline=Snapshot;TestDevice=Device;TestTitle=title;Busy=YES;State=@"仅提交一次官方创建回调；等待官方真实列表和ID，未声明成功";SaveEvidence();
+        [response setValue:command forKey:@"command"];[response setValue:[@"Create to-do" stringByAppendingString:title] forKey:@"query"];[response setValue:@"" forKey:@"answer"];[response setValue:@"" forKey:@"spoken"];
+    }@catch(NSException *e){return @"Wrapping properties mismatch, not called.";}
+    Baseline=Snapshot;TestDevice=Device;TestTitle=title;Busy=YES;State=@"Only submit the official creation callback once; waiting for the official real list and ID, no success declared";SaveEvidence();
     // The currently installed listener goes through the existing Addon hook;
     // task domain remains official. No standalone SDK or Bluetooth list rewrite.
     Injecting=YES;
     @try{((void(*)(id,SEL,id))objc_msgSend)(Listener,NSSelectorFromString(@"onNlpResult:"),response);}
-    @catch(NSException *e){Busy=NO;State=@"官方回调调用异常；结果未知，禁止重试";SaveEvidence();}
+    @catch(NSException *e){Busy=NO;State=@"The official callback call is abnormal; the result is unknown and retry is prohibited.";SaveEvidence();}
     @finally{Injecting=NO;}
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,25*NSEC_PER_SEC),dispatch_get_main_queue(),^{if(Busy){Busy=NO;State=@"25秒内未观察到唯一新项；结果未知，不自动重发";SaveEvidence();}});
-    return [@"已提交：" stringByAppendingString:title];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,25*NSEC_PER_SEC),dispatch_get_main_queue(),^{if(Busy){Busy=NO;State=@"No unique new item observed within 25 seconds; result unknown, no automatic resend";SaveEvidence();}});
+    return [@"Submitted:" stringByAppendingString:title];
 }
 void TIOInstallTodoRuntime(void){
     if(Installed)return;Method method=class_getInstanceMethod(NSClassFromString(@"rayneo_venus_sdk_plugin.RayneoNetPluginBridge"),NSSelectorFromString(@"handleMethodCall:result:"));Method send=class_getInstanceMethod(NSClassFromString(@"FlutterEngine"),NSSelectorFromString(@"sendOnChannel:message:binaryReply:"));
-    if(!Sign(method,4)||!Sign(send,5)){State=@"观察方法签名不匹配，未安装";return;}
+    if(!Sign(method,4)||!Sign(send,5)){State=@"Watch method signature mismatch, not installed";return;}
     PriorMethod=(void *)method_setImplementation(method,(IMP)MethodHook);PriorSend=(void *)method_setImplementation(send,(IMP)Send);Installed=YES;TIOOTARecordTransportHookReady();
 }
 @interface TIOTodoRuntimePanel:UITableViewController @end
-@implementation TIOTodoRuntimePanel
-- (void)viewDidLoad{[super viewDidLoad];self.title=@"待办协议验收";self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc]initWithTitle:@"刷新" style:UIBarButtonItemStylePlain target:self action:@selector(refresh)];}
-- (void)refresh{[self.tableView reloadData];}
-- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s{return 2;}
-- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s{return @"只测试官方持久化创建入口；不发送网页业务待办、不覆盖眼镜列表。一次创建后不自动重试。列表基线仅保留进程内存，文件只记录命名测试项和计数。";}
-- (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip{UITableViewCell *c=[[UITableViewCell alloc]initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];c.detailTextLabel.numberOfLines=0;NSDictionary *s=TIOTodoRuntimeStatus();c.textLabel.text=ip.row?@"创建一条桥接测试待办":s[@"state"];c.textLabel.numberOfLines=0;c.detailTextLabel.text=ip.row?@"通过真实官方模板；不会调用未验证的Dart地址":[NSString stringWithFormat:@"列表%@次 · 新增回调%@次 · 实体回传%@次\n%@\n真实ID：%@；完成：%@",s[@"snapshots"],s[@"taskEvents"],s[@"physicalEvents"],s[@"testTitle"],[s[@"hasWireId"] boolValue]?@"已匹配":@"未匹配",[s[@"physicalComplete"] boolValue]?@"是":@"否"];return c;}
-- (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip{[t deselectRowAtIndexPath:ip animated:YES];if(!ip.row){[self refresh];return;}UIAlertController *a=[UIAlertController alertControllerWithTitle:@"创建专用测试项？" message:@"将通过官方待办流程尝试新增一条随机编号测试项，不动其他待办。即使超时也不自动重发。" preferredStyle:UIAlertControllerStyleAlert];[a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];[a addAction:[UIAlertAction actionWithTitle:@"创建测试项" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){NSString *result=TIOTodoCreateTestTask();UIAlertController *b=[UIAlertController alertControllerWithTitle:@"提交状态" message:result preferredStyle:UIAlertControllerStyleAlert];[b addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:nil]];[self presentViewController:b animated:YES completion:nil];[self refresh];}]];[self presentViewController:a animated:YES completion:nil];}
+@implementation TIOTodoRuntimePanel{
+    NSArray *_completedTasks;
+}
+- (void)viewDidLoad{
+    [super viewDidLoad];
+    self.title=@"Todo Verification & Reverse Sync";
+    self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc]initWithTitle:@"Refresh" style:UIBarButtonItemStylePlain target:self action:@selector(refresh)];
+    [self loadTasks];
+}
+- (void)loadTasks{
+    _completedTasks=LoadCompletedTasks();
+    [self.tableView reloadData];
+}
+- (void)refresh{
+    [self loadTasks];
+}
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView{
+    return 3;
+}
+- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s{
+    if(s==0) return 1;
+    if(s==1) return MAX(1, (NSInteger)_completedTasks.count);
+    return 1;
+}
+- (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s{
+    if(s==0) return @"Sync Status & Diagnostics";
+    if(s==1) return [NSString stringWithFormat:@"Completed Tasks (Glasses Reverse Sync: %lu)", (unsigned long)_completedTasks.count];
+    return @"Testing Actions";
+}
+- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s{
+    if(s==0) return @"Tap temple on glasses to complete any to-do item. The glasses will send packet businessId: 22, status: 1 which is reverse-synced here.";
+    if(s==1) return @"Tasks marked completed on glasses are saved locally in the companion database.";
+    return @"Create dedicated test items through official NLP channel.";
+}
+- (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip{
+    UITableViewCell *c=[[UITableViewCell alloc]initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+    c.detailTextLabel.numberOfLines=0;
+    if(ip.section==0){
+        NSDictionary *s=TIOTodoRuntimeStatus();
+        c.textLabel.text=s[@"state"];
+        c.textLabel.numberOfLines=0;
+        c.detailTextLabel.text=[NSString stringWithFormat:@"Snapshots: %@ · Task Events: %@ · Temple Taps: %@\nMatched ID: %@ · Completed: %@",
+            s[@"snapshots"], s[@"taskEvents"], s[@"physicalEvents"],
+            [s[@"hasWireId"] boolValue]?s[@"testTitle"]:@"None",
+            [s[@"physicalComplete"] boolValue]?@"YES":@"NO"];
+        return c;
+    }
+    if(ip.section==1){
+        if(!_completedTasks.count){
+            c.textLabel.text=@"No completed tasks recorded yet";
+            c.textLabel.textColor=UIColor.secondaryLabelColor;
+            c.detailTextLabel.text=@"Open Item 3 (To-Do) on glasses and tap temple on an item to complete it.";
+            return c;
+        }
+        NSDictionary *task=_completedTasks[ip.row];
+        c.textLabel.text=[NSString stringWithFormat:@"✓ %@", task[@"title"]?:@"Unknown Task"];
+        c.textLabel.textColor=UIColor.labelColor;
+        NSDate *d=[NSDate dateWithTimeIntervalSince1970:[task[@"completedAt"] doubleValue]];
+        NSDateFormatter *df=[NSDateFormatter new];
+        df.dateStyle=NSDateFormatterShortStyle;
+        df.timeStyle=NSDateFormatterMediumStyle;
+        c.detailTextLabel.text=[NSString stringWithFormat:@"Wire ID: %@ · Status: %@ · Completed: %@",
+            task[@"wireId"], [task[@"status"] isEqual:@1]?@"Completed":@"Active", [df stringFromDate:d]];
+        return c;
+    }
+    c.textLabel.text=@"Create bridge test backlog item";
+    c.detailTextLabel.text=@"Submits a test task via official voice template pipeline.";
+    return c;
+}
+- (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip{
+    [t deselectRowAtIndexPath:ip animated:YES];
+    if(ip.section==0){[self refresh];return;}
+    if(ip.section==1&&_completedTasks.count){
+        NSDictionary *task=_completedTasks[ip.row];
+        UIAlertController *a=[UIAlertController alertControllerWithTitle:task[@"title"] message:[NSString stringWithFormat:@"Wire ID: %@\nStatus: %@\nDevice: %@", task[@"wireId"], [task[@"status"] isEqual:@1]?@"Completed (1)":@"Active (0)", task[@"deviceId"]?:@"Unknown"] preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+        [self presentViewController:a animated:YES completion:nil];
+        return;
+    }
+    if(ip.section==2){
+        UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Create a dedicated test item?" message:@"An attempt will be made to add a randomly numbered test item through the official to-do process." preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+        [a addAction:[UIAlertAction actionWithTitle:@"Create test item" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){
+            NSString *result=TIOTodoCreateTestTask();
+            UIAlertController *b=[UIAlertController alertControllerWithTitle:@"Submit status" message:result preferredStyle:UIAlertControllerStyleAlert];
+            [b addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+            [self presentViewController:b animated:YES completion:nil];
+            [self refresh];
+        }]];
+        [self presentViewController:a animated:YES completion:nil];
+    }
+}
 @end
 void TIOOpenTodoRuntime(id parent){if([parent isKindOfClass:UIViewController.class])[[(UIViewController *)parent navigationController] pushViewController:[[TIOTodoRuntimePanel alloc]initWithStyle:UITableViewStyleInsetGrouped] animated:YES];}

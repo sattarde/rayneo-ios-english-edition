@@ -10,32 +10,35 @@
 #import "NewsTeleprompter.h"
 #import "NavigationPlaces.h"
 #import "NavigationBackground.h"
+#import "NavigationRoadNetwork.h"
+#import "NavigationRoadNetwork.inc"
+#import <CoreLocation/CoreLocation.h>
+#import <MapKit/MapKit.h>
+#import <Security/Security.h>
+#include <math.h>
 #if TIO_DISPLAY_PHONE
 #import "DisplayPhoneUI.h"
 #import "NativeNavigationUI.h"
 #import "NativeNavigation.h"
 #import "DisplayHUDRenderer.h"
 #endif
-#import <CoreLocation/CoreLocation.h>
-#import <Security/Security.h>
-#if TIO_AMAP_ENABLED
-#import <AMapNaviKit/AMapNaviKit.h>
-#import <AMapNaviKit/MAMapKit.h>
-#import <AMapFoundationKit/AMapFoundationKit.h>
-#endif
 
-static NSString *const NavConsent=@"io.turboio.navigation.privacy.v1";
-static NSDictionary *KeyQuery(void){return @{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,(__bridge id)kSecAttrService:@"io.turboio.navigation",(__bridge id)kSecAttrAccount:@"amap-ios"};}
-static NSString *ReadNavKey(void){NSMutableDictionary *q=[KeyQuery() mutableCopy];q[(__bridge id)kSecReturnData]=@YES;CFTypeRef v=NULL;if(SecItemCopyMatching((__bridge CFDictionaryRef)q,&v)!=errSecSuccess)return nil;return [[NSString alloc]initWithData:CFBridgingRelease(v) encoding:NSUTF8StringEncoding];}
-static BOOL ValidKey(NSString *s){return [s isKindOfClass:NSString.class]&&s.length==32&&[s rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"].invertedSet].location==NSNotFound;}
-static BOOL WriteNavKey(NSString *s){if(!ValidKey(s))return NO;NSDictionary *a=@{(__bridge id)kSecValueData:[s dataUsingEncoding:NSUTF8StringEncoding],(__bridge id)kSecAttrAccessible:(__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly};OSStatus r=SecItemUpdate((__bridge CFDictionaryRef)KeyQuery(),(__bridge CFDictionaryRef)a);if(r==errSecItemNotFound){NSMutableDictionary *q=[KeyQuery() mutableCopy];[q addEntriesFromDictionary:a];r=SecItemAdd((__bridge CFDictionaryRef)q,NULL);}return r==errSecSuccess;}
-static void BootstrapKey(void){if(ReadNavKey().length)return;NSString *p=[NSBundle.mainBundle pathForResource:@"TIOAMapPrivate" ofType:@"json"];NSData *d=[NSData dataWithContentsOfFile:p?:@""];if(!d||d.length>4096)return;id j=[NSJSONSerialization JSONObjectWithData:d options:0 error:nil];if([j isKindOfClass:NSDictionary.class]&&[j[@"bundleIdentifier"] isEqual:NSBundle.mainBundle.bundleIdentifier])WriteNavKey(j[@"apiKey"]);}
+static NSInteger IconForStep(MKRouteStep *step){
+    if(!step) return 9;
+    NSString *inst=step.instructions.lowercaseString?:@"";
+    if([inst containsString:@"arrive"]||[inst containsString:@"destination"]) return 15;
+    if([inst containsString:@"roundabout"]) return 11;
+    if([inst containsString:@"u-turn"]) return 8;
+    if([inst containsString:@"sharp left"]) return 6;
+    if([inst containsString:@"sharp right"]) return 7;
+    if([inst containsString:@"slight left"]||[inst containsString:@"bear left"]) return 4;
+    if([inst containsString:@"slight right"]||[inst containsString:@"bear right"]) return 5;
+    if([inst containsString:@"left"]) return 2;
+    if([inst containsString:@"right"]) return 3;
+    return 9;
+}
 
-@interface TIONavigationPanel:UIViewController<CLLocationManagerDelegate
-#if TIO_AMAP_ENABLED
-,MAMapViewDelegate,AMapNaviWalkManagerDelegate,AMapNaviWalkDataRepresentable,AMapNaviRideManagerDelegate,AMapNaviRideDataRepresentable,AMapNaviDriveManagerDelegate,AMapNaviDriveDataRepresentable
-#endif
->
+@interface TIONavigationPanel:UIViewController<CLLocationManagerDelegate,MKMapViewDelegate>
 @property UILabel *statusLabel,*hudLabel,*destinationLabel;
 @property UIStackView *stack;
 @property UIScrollView *scroll;
@@ -75,6 +78,24 @@ static void BootstrapKey(void){if(ReadNavKey().length)return;NSString *p=[NSBund
 @property NSString *destinationName;
 @property CLLocationCoordinate2D simulationStart;
 @property NSUInteger locationGeneration;
+@property MKMapView *map;
+@property MKPointAnnotation *pin;
+@property MKPointAnnotation *startPin;
+@property MKPolyline *routeLine;
+@property MKRoute *currentRoute;
+@property NSArray<MKRouteStep *> *routeSteps;
+@property NSUInteger currentStepIndex;
+@property NSUInteger currentPointIndex;
+@property NSArray<CLLocation *> *allRoutePoints;
+@property NSTimer *simTimer;
+@property dispatch_source_t simDispatchTimer;
+@property NSArray *cachedNavPoints;
+@property NSUInteger lastMiniMapPtIdx, lastMiniMapStepIdx;
+@property CLLocationCoordinate2D lastMapUserCoord;
+@property double lastMapHeading;
+@property NSArray *cachedMapRoads;
+@property NSArray *cachedLocalCoords;
+@property NSArray *cachedManeuverCoord;
 #if TIO_DISPLAY_PHONE
 @property UIButton *tdpButton;
 @property UILabel *tdpStatus;
@@ -84,79 +105,471 @@ static void BootstrapKey(void){if(ReadNavKey().length)return;NSString *p=[NSBund
 @property NSTimeInterval crossReceived;
 @property NSUInteger crossReceivedCount,iconReceivedCount;
 #endif
-#if TIO_AMAP_ENABLED
-@property AMapNaviHUDView *nativeHUD;
-@property MAMapView *map;
-@property id<TIONavigationManager> manager;
-@property Class retiringManagerClass;
-@property(weak) id<TIONavigationManager> retiringManager;
-@property MAPointAnnotation *pin;
-@property MAPointAnnotation *startPin;
-@property MAPolyline *routeLine;
-#endif
 @end
+
 @implementation TIONavigationPanel
-- (UIButton *)button:(NSString *)title action:(SEL)action identifier:(NSString *)identifier{UIButton *b=[UIButton buttonWithType:UIButtonTypeSystem];b.configuration=[UIButtonConfiguration tintedButtonConfiguration];[b setTitle:title forState:UIControlStateNormal];b.accessibilityIdentifier=identifier;[b addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];[self.stack addArrangedSubview:b];return b;}
+- (UIButton *)button:(NSString *)title action:(SEL)action identifier:(NSString *)identifier{
+    UIButton *b=[UIButton buttonWithType:UIButtonTypeSystem];b.configuration=[UIButtonConfiguration tintedButtonConfiguration];[b setTitle:title forState:UIControlStateNormal];b.accessibilityIdentifier=identifier;[b addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];[self.stack addArrangedSubview:b];return b;
+}
 - (void)viewDidLoad{
-    [super viewDidLoad];self.title=@"多模式导航 · 后台连接";self.view.backgroundColor=TIOPaper();self.view.tintColor=TIOAccent();self.note=@"字幕直传：先获取预览/退出格式，再启动高德模拟，确认眼镜空闲后开启。模拟可短时退后台；实时导航在授权后可后台运行。请勿边驾驶边调试。";self.teleHUD=[TIONavTeleHUD new];self.subtitleHUD=[TIONavSubtitleHUD new];
-#ifndef TIO_UI_PREVIEW
-    BootstrapKey();
-#endif
+    [super viewDidLoad];self.title=@"Navigation HUD";self.view.backgroundColor=TIOPaper();self.view.tintColor=TIOAccent();self.note=@"Apple MapKit navigation with glasses HUD. Select a destination or tap the map to begin.";self.teleHUD=[TIONavTeleHUD new];self.subtitleHUD=[TIONavSubtitleHUD new];
     self.scroll=[UIScrollView new];self.scroll.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:self.scroll];
     self.stack=[UIStackView new];self.stack.axis=UILayoutConstraintAxisVertical;self.stack.spacing=12;self.stack.translatesAutoresizingMaskIntoConstraints=NO;[self.scroll addSubview:self.stack];
     [NSLayoutConstraint activateConstraints:@[[self.scroll.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor],[self.scroll.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor],[self.scroll.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],[self.scroll.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor],[self.stack.leadingAnchor constraintEqualToAnchor:self.scroll.contentLayoutGuide.leadingAnchor constant:16],[self.stack.trailingAnchor constraintEqualToAnchor:self.scroll.contentLayoutGuide.trailingAnchor constant:-16],[self.stack.topAnchor constraintEqualToAnchor:self.scroll.contentLayoutGuide.topAnchor constant:16],[self.stack.bottomAnchor constraintEqualToAnchor:self.scroll.contentLayoutGuide.bottomAnchor constant:-24],[self.stack.widthAnchor constraintEqualToAnchor:self.scroll.frameLayoutGuide.widthAnchor constant:-32]]];
-    self.statusLabel=[UILabel new]; // Diagnostic text only; not part of the primary layout.
+    self.statusLabel=[UILabel new];
     [self buildWorkspace];
     self.permission=[CLLocationManager new];self.permission.delegate=self;self.navigationBackgroundTask=UIBackgroundTaskInvalid;
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:@"TIONavigationChanged" object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(stopUser) name:@"TIOResearchClosed" object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(background) name:UIApplicationDidEnterBackgroundNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(background) name:UIApplicationWillResignActiveNotification object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(navigationForeground) name:UIApplicationDidBecomeActiveNotification object:nil];
     self.display=TIONavDisplay(@"stopped",0,@"",-1,-1,-1,NO);[self refresh];
 }
-- (void)viewWillAppear:(BOOL)animated{[super viewWillAppear:animated];if(!self.timer){__weak typeof(self) weak=self;self.timer=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *t){[weak tick];}];} [self refresh];}
-- (void)viewDidDisappear:(BOOL)animated{[super viewDidDisappear:animated];self.pendingMapAction=nil;if(UIApplication.sharedApplication.applicationState!=UIApplicationStateActive&&!self.isMovingFromParentViewController&&!self.isBeingDismissed&&!self.navigationController.isBeingDismissed)return;[self stopUser];[self.timer invalidate];self.timer=nil;}
-- (void)dealloc{if(self.navigationBackgroundTask!=UIBackgroundTaskInvalid)[UIApplication.sharedApplication endBackgroundTask:self.navigationBackgroundTask];[self.subtitleHUD stop:@"导航页面已销毁"];[self.teleHUD stop:@"导航页面已销毁"];[self.timer invalidate];[NSNotificationCenter.defaultCenter removeObserver:self];}
-- (void)refresh{if(!NSThread.isMainThread){dispatch_async(dispatch_get_main_queue(),^{[self refresh];});return;}NSDictionary *s=TIONavTransportStatus(),*tele=self.teleHUD.status;self.statusLabel.text=[NSString stringWithFormat:@"%@\n常亮：%@ · 已提交%@帧\n通知：%@\n连接／卡片：%@\nKey：%@ · SDK：%@",self.note?:@"",tele[@"note"],tele[@"frames"],s[@"noticeNote"],s[@"note"],ReadNavKey().length?@"已配置（有效性待实际算路）":@"未配置",
-#if TIO_AMAP_ENABLED
-    @"11.2.100"
-#else
-    @"此构建未链接（仅离线夹具）"
-#endif
-    ];NSDictionary *sub=self.subtitleHUD.status;self.statusLabel.text=[NSString stringWithFormat:@"字幕：%@ · 已提交%@帧\n%@\n%@",sub[@"note"],sub[@"frames"],TIOSubtitleNavigationStatus()[@"note"],self.statusLabel.text];
-    if(![sub isEqual:self.lastSubtitleDiagnostic]){self.lastSubtitleDiagnostic=sub;NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/TurboIOResearch/subtitle-hud"];[NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:@{NSFileProtectionKey:NSFileProtectionCompleteUntilFirstUserAuthentication} error:nil];NSMutableDictionary *report=[sub mutableCopy];report[@"time"]=@(NSDate.date.timeIntervalSince1970);[[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil] writeToFile:[dir stringByAppendingPathComponent:@"navigation.json"] options:NSDataWritingAtomic error:nil];}
-    self.hudLabel.text=[NSString stringWithFormat:@"%@\n\n%@  %@\n%@\n%@",self.display[@"mode"]?:@"",self.display[@"turn"]?:@"",self.display[@"distance"]?:@"",self.display[@"road"]?:@"",self.display[@"summary"]?:@""];[self refreshWorkspace];
-    if(![tele isEqual:self.lastTeleDiagnostic]){self.lastTeleDiagnostic=tele;NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/TurboIOPrivateAddon"];[NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:nil];NSMutableDictionary *d=[tele mutableCopy];d[@"time"]=@([NSDate.date timeIntervalSince1970]);NSString *p=[dir stringByAppendingPathComponent:@"navigation-tele-diagnostic.json"];[[NSJSONSerialization dataWithJSONObject:d options:0 error:nil] writeToFile:p options:NSDataWritingAtomic error:nil];[NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:p error:nil];}}
+- (void)viewWillAppear:(BOOL)animated{
+    [super viewWillAppear:animated];
+    if(!self.timer){
+        __weak typeof(self) weak=self;
+        self.timer=[NSTimer timerWithTimeInterval:1 repeats:YES block:^(NSTimer *t){[weak tick];}];
+        [[NSRunLoop mainRunLoop] addTimer:self.timer forMode:NSRunLoopCommonModes];
+    }
+    [self refresh];
+}
+- (void)viewDidDisappear:(BOOL)animated{
+    [super viewDidDisappear:animated];self.pendingMapAction=nil;
+    if(UIApplication.sharedApplication.applicationState!=UIApplicationStateActive&&!self.isMovingFromParentViewController&&!self.isBeingDismissed&&!self.navigationController.isBeingDismissed)return;
+    [self stopUser];[self.timer invalidate];self.timer=nil;
+}
+- (void)dealloc{
+    if(self.navigationBackgroundTask!=UIBackgroundTaskInvalid)[UIApplication.sharedApplication endBackgroundTask:self.navigationBackgroundTask];
+    [self.subtitleHUD stop:@"Navigation page has been destroyed"];[self.teleHUD stop:@"Navigation page has been destroyed"];
+    if(self.simDispatchTimer){dispatch_source_cancel(self.simDispatchTimer);self.simDispatchTimer=nil;}
+    [self.timer invalidate];[self.simTimer invalidate];
+    [NSNotificationCenter.defaultCenter removeObserver:self];
+}
+- (void)refresh{
+    if(!NSThread.isMainThread){dispatch_async(dispatch_get_main_queue(),^{[self refresh];});return;}
+    NSDictionary *s=TIONavTransportStatus();
+    self.statusLabel.text=[NSString stringWithFormat:@"%@\nMapKit Engine · Glasses Stream Ready\nNotification: %@\nConnection: %@",self.note?:@"",s[@"noticeNote"]?:@"",s[@"note"]?:@""];
+    self.hudLabel.text=[NSString stringWithFormat:@"%@\n\n%@  %@\n%@\n%@",self.display[@"mode"]?:@"",self.display[@"turn"]?:@"",self.display[@"distance"]?:@"",self.display[@"road"]?:@"",self.display[@"summary"]?:@""];
+    [self refreshWorkspace];
+}
 - (void)setFrame:(NSDictionary *)frame{
-#if TIO_DISPLAY_PHONE
-    if(![frame[@"phase"] isEqual:@"navigating"]||![frame[@"segment"] isEqual:self.display[@"segment"]])self.crossPixels=nil;
-#endif
-    self.display=frame;TIONavOfferDisplay(frame);[self.teleHUD offer:frame at:NSProcessInfo.processInfo.systemUptime];[self.subtitleHUD offer:frame at:NSProcessInfo.processInfo.systemUptime];
+    self.display=frame;TIONavOfferDisplay(frame);
+    [self.teleHUD offer:frame at:NSProcessInfo.processInfo.systemUptime];
+    [self.subtitleHUD offer:frame at:NSProcessInfo.processInfo.systemUptime];
 #if TIO_DISPLAY_PHONE
     TDPPhoneNavigationOffer([self displayHUDFrame]);[self refreshDisplayHUD];
 #endif
-    [self refresh];}
+    [self refresh];
+}
 - (void)tick{
 #if TIO_DISPLAY_PHONE
-    if(self.crossPixels&&NSProcessInfo.processInfo.systemUptime-self.crossReceived>12){self.crossPixels=nil;if([self.display[@"phase"] isEqual:@"navigating"])TDPPhoneNavigationOffer([self displayHUDFrame]);}
     TDPPhoneNavigationPump();[self refreshDisplayHUD];
 #endif
-    TIONavPump();[self.subtitleHUD pumpAt:NSProcessInfo.processInfo.systemUptime];[self.teleHUD pumpAt:NSProcessInfo.processInfo.systemUptime];[self refresh];if(self.fixture&&self.active){self.fixtureStep++;NSArray *icons=@[@9,@2,@3,@29,@15];NSUInteger i=MIN(self.fixtureStep/4,4);[self setFrame:TIONavDisplay(i==4?@"arrived":@"navigating",[icons[i] integerValue],@"模拟测试道路",MAX(0,160-(NSInteger)self.fixtureStep*10),850,720,YES)];if(i==4){self.fixture=NO;self.active=NO;self.note=@"离线夹具结束；手动停止以清理卡片";[self refresh];}}
-    if(self.active&&!self.routeReady&&!self.fixture&&!self.planning&&!self.staleShown&&NSProcessInfo.processInfo.systemUptime-self.lastInfo>15){self.staleShown=YES;[self setFrame:TIONavDisplay(@"stale",0,@"",-1,-1,-1,self.simulated)];}}
-- (void)alert:(NSString *)title message:(NSString *)message{UIAlertController *a=[UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];[a addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:nil]];[self presentViewController:a animated:YES completion:nil];}
-- (void)configureKey{if(self.initialized){[self alert:@"先重启 App" message:@"SDK 已初始化。本轮不热替换 Key，避免影响已有导航实例；请重启后配置。"] ;return;}UIAlertController *a=[UIAlertController alertControllerWithTitle:@"高德 iOS Key" message:@"绑定当前 App 的 Bundle ID；仅保存于本机钥匙串，不回显旧值。" preferredStyle:UIAlertControllerStyleAlert];[a addTextFieldWithConfigurationHandler:^(UITextField *f){f.placeholder=@"32 位 iOS Key";f.secureTextEntry=YES;f.autocorrectionType=UITextAutocorrectionTypeNo;f.autocapitalizationType=UITextAutocapitalizationTypeNone;}];[a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];[a addAction:[UIAlertAction actionWithTitle:@"保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){self.note=WriteNavKey(a.textFields.firstObject.text)?@"Key 已保存，尚未进行 SDK 鉴权":@"保存失败：检查格式与钥匙串权限";[self refresh];}]];[self presentViewController:a animated:YES completion:nil];}
-- (void)consent{
-#if TIO_AMAP_ENABLED
-    if(!ValidKey(ReadNavKey())){[self alert:@"尚未配置 Key" message:@"请先填写高德 iOS Key。"] ;return;}
-    if([NSUserDefaults.standardUserDefaults boolForKey:NavConsent]){[self openMap];return;}
-    UIAlertController *a=[UIAlertController alertControllerWithTitle:@"启用高德地图与导航？" message:@"提供方：高德软件有限公司。地图、定位与导航会按高德隐私政策处理设备、网络、位置及起终点信息，用于地图、算路与导航。本扩展不保存轨迹，不发送位置给大模型。真实导航需定位授权；点击开始实时导航后会持续使用后台定位，直到停止、到达或关闭导航页面。模拟只使用系统短时后台额度，不启动真实定位。\n请先阅读高德 SDK 隐私政策，再决定是否同意。" preferredStyle:UIAlertControllerStyleAlert];
-    [a addAction:[UIAlertAction actionWithTitle:@"查看高德隐私政策" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){[UIApplication.sharedApplication openURL:[NSURL URLWithString:@"https://lbs.amap.com/pages/privacy/"] options:@{} completionHandler:nil];}]];
-    [a addAction:[UIAlertAction actionWithTitle:@"不同意" style:UIAlertActionStyleCancel handler:^(UIAlertAction *x){self.pendingMapAction=nil;}]];
-    [a addAction:[UIAlertAction actionWithTitle:@"同意并开启地图" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){[NSUserDefaults.standardUserDefaults setBool:YES forKey:NavConsent];[self openMap];}]];[self presentViewController:a animated:YES completion:nil];
-#else
-    [self alert:@"离线预览构建" message:@"此构建不包含高德 SDK。可使用离线显示夹具；不会伪装为真实导航。"];
-#endif
+    TIONavPump();[self.subtitleHUD pumpAt:NSProcessInfo.processInfo.systemUptime];[self.teleHUD pumpAt:NSProcessInfo.processInfo.systemUptime];
+    if(self.fixture&&self.active){
+        self.fixtureStep++;NSArray *icons=@[@9,@2,@3,@4,@15];NSUInteger i=MIN(self.fixtureStep/4,4);
+        [self setFrame:TIONavDisplay(i==4?@"arrived":@"navigating",[icons[i] integerValue],@"Simulated Street",MAX(0,160-(NSInteger)self.fixtureStep*10),850,720,YES)];
+        if(i==4){self.fixture=NO;self.active=NO;self.note=@"Offline fixture finished";[self refresh];}
+    }
 }
+- (void)alert:(NSString *)title message:(NSString *)message{
+    UIAlertController *a=[UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+- (void)consent{[self openMap];}
+- (void)openMap{
+    if(!self.initialized){
+        self.initialized=YES;
+        self.map=[MKMapView new];self.map.delegate=self;self.map.showsUserLocation=YES;self.map.translatesAutoresizingMaskIntoConstraints=NO;
+        UITapGestureRecognizer *tap=[[UITapGestureRecognizer alloc]initWithTarget:self action:@selector(mapTapped:)];
+        [self.map addGestureRecognizer:tap];
+        [self.mapHost insertSubview:self.map atIndex:0];
+        [NSLayoutConstraint activateConstraints:@[
+            [self.map.leadingAnchor constraintEqualToAnchor:self.mapHost.leadingAnchor],
+            [self.map.trailingAnchor constraintEqualToAnchor:self.mapHost.trailingAnchor],
+            [self.map.topAnchor constraintEqualToAnchor:self.mapHost.topAnchor],
+            [self.map.bottomAnchor constraintEqualToAnchor:self.mapHost.bottomAnchor]
+        ]];
+        self.mapHint.hidden=YES;
+        [self.permission requestWhenInUseAuthorization];
+        [self.permission startUpdatingLocation];
+        [self.permission startUpdatingHeading];
+        if(self.permission.location){
+            [self.map setRegion:MKCoordinateRegionMakeWithDistance(self.permission.location.coordinate,1500,1500) animated:NO];
+            [self selectSimulationStart:self.permission.location.coordinate name:@"Current Location"];
+        }
+    }
+    self.note=@"MapKit ready. Tap map or search to choose destination.";
+    [self refresh];[self continueMapAction:0];
+}
+- (void)mapTapped:(UITapGestureRecognizer *)g{
+    if(g.state!=UIGestureRecognizerStateEnded)return;
+    CGPoint pt=[g locationInView:self.map];
+    CLLocationCoordinate2D c=[self.map convertPoint:pt toCoordinateFromView:self.map];
+    [self selectMapCoordinate:c];
+}
+- (void)planRoute{
+    if(!self.initialized){[self openMap];return;}
+    if(!self.hasDestination){[self alert:@"Choose Destination First" message:@"Search for a location or tap on the map to drop a pin."];return;}
+    
+    CLLocationCoordinate2D startCoord;
+    if(self.permission.location&&TIONavCoordinate(self.permission.location.coordinate.latitude,self.permission.location.coordinate.longitude)){
+        // Real GPS is available — always use current real location as start!
+        startCoord=self.permission.location.coordinate;
+    }else if(self.hasSimulationStart&&TIONavCoordinate(self.simulationStart.latitude,self.simulationStart.longitude)){
+        // Verify custom simulation start is in the same region (<150km)
+        CLLocation *sLoc=[[CLLocation alloc]initWithLatitude:self.simulationStart.latitude longitude:self.simulationStart.longitude];
+        CLLocation *dLoc=[[CLLocation alloc]initWithLatitude:self.destination.latitude longitude:self.destination.longitude];
+        if([sLoc distanceFromLocation:dLoc]<150000.0){
+            startCoord=self.simulationStart;
+        }else{
+            startCoord=CLLocationCoordinate2DMake(self.destination.latitude+0.006,self.destination.longitude+0.006);
+            [self selectSimulationStart:startCoord name:@"Sim Start (~800m)"];
+        }
+    }else{
+        // No GPS and no custom start — offset by ~800m from destination
+        startCoord=CLLocationCoordinate2DMake(self.destination.latitude+0.006,self.destination.longitude+0.006);
+        [self selectSimulationStart:startCoord name:@"Sim Start (~800m)"];
+    }
+    
+    // Safety check: if start is too close to destination (<50m), offset it slightly
+    CLLocation *sLoc=[[CLLocation alloc]initWithLatitude:startCoord.latitude longitude:startCoord.longitude];
+    CLLocation *dLoc=[[CLLocation alloc]initWithLatitude:self.destination.latitude longitude:self.destination.longitude];
+    if([sLoc distanceFromLocation:dLoc]<50.0){
+        startCoord=CLLocationCoordinate2DMake(self.destination.latitude+0.006,self.destination.longitude+0.006);
+        [self selectSimulationStart:startCoord name:@"Sim Start (~800m)"];
+    }
+    
+    self.planning=YES;self.routeReady=NO;self.active=YES;self.simulated=(self.travelMode.selectedSegmentIndex==0);
+    self.note=@"Calculating route with Apple MapKit…";
+    [self setFrame:TIONavDisplay(@"planning",0,@"",-1,-1,-1,self.simulated)];[self refresh];
+    
+    MKDirectionsRequest *req=[MKDirectionsRequest new];
+    req.source=[[MKMapItem alloc]initWithPlacemark:[[MKPlacemark alloc]initWithCoordinate:startCoord]];
+    req.destination=[[MKMapItem alloc]initWithPlacemark:[[MKPlacemark alloc]initWithCoordinate:self.destination]];
+    if(self.selectedTransport==TIONavigationDrive) req.transportType=MKDirectionsTransportTypeAutomobile;
+    else if(self.selectedTransport==TIONavigationRide){
+        if(@available(iOS 14.0, *)) req.transportType=MKDirectionsTransportTypeCycling;
+        else req.transportType=MKDirectionsTransportTypeWalking;
+    } else req.transportType=MKDirectionsTransportTypeWalking;
+    
+    MKDirections *dir=[[MKDirections alloc]initWithRequest:req];__weak typeof(self) weak=self;
+    [dir calculateDirectionsWithCompletionHandler:^(MKDirectionsResponse *res,NSError *err){
+        dispatch_async(dispatch_get_main_queue(),^{
+            TIONavigationPanel *s=weak;if(!s)return;
+            if((err||!res.routes.count)&&s.selectedTransport==TIONavigationRide&&req.transportType!=MKDirectionsTransportTypeWalking){
+                // Cycling directions may be unsupported in this region; fall back to walking route
+                MKDirectionsRequest *fallback=[MKDirectionsRequest new];
+                fallback.source=req.source;fallback.destination=req.destination;
+                fallback.transportType=MKDirectionsTransportTypeWalking;
+                MKDirections *fbDir=[[MKDirections alloc]initWithRequest:fallback];
+                [fbDir calculateDirectionsWithCompletionHandler:^(MKDirectionsResponse *fbRes,NSError *fbErr){
+                    dispatch_async(dispatch_get_main_queue(),^{
+                        TIONavigationPanel *s2=weak;if(!s2)return;
+                        s2.planning=NO;
+                        if(fbErr||!fbRes.routes.count){
+                            [s2 fail:fbErr?[NSString stringWithFormat:@"Route calculation failed: %@",fbErr.localizedDescription]:@"No route found between these locations."];
+                            return;
+                        }
+                        s2.note=@"Cycling unavailable in this area; walking route loaded.";
+                        [s2 applyCalculatedRoute:fbRes.routes.firstObject];
+                    });
+                }];
+                return;
+            }
+            s.planning=NO;
+            if(err||!res.routes.count){
+                [s fail:err?[NSString stringWithFormat:@"Route calculation failed: %@",err.localizedDescription]:@"No route found between these locations."];
+                return;
+            }
+            [s applyCalculatedRoute:res.routes.firstObject];
+        });
+    }];
+}
+- (void)applyCalculatedRoute:(MKRoute *)route{
+    self.currentRoute=route;self.routeSteps=route.steps;self.currentStepIndex=0;self.currentPointIndex=0;self.routeReady=YES;
+    
+    // Extract and densify route points to ~20 meter spacing for smooth simulation
+    NSUInteger count=route.polyline.pointCount;
+    CLLocationCoordinate2D *coords=malloc(sizeof(CLLocationCoordinate2D)*count);
+    [route.polyline getCoordinates:coords range:NSMakeRange(0,count)];
+    NSMutableArray *pts=[NSMutableArray new];
+    for(NSUInteger i=0;i<count;i++){
+        CLLocation *curr=[[CLLocation alloc]initWithLatitude:coords[i].latitude longitude:coords[i].longitude];
+        if(pts.count>0){
+            CLLocation *prev=pts.lastObject;
+            CLLocationDistance d=[curr distanceFromLocation:prev];
+            if(d>25.0){
+                NSUInteger steps=(NSUInteger)ceil(d/20.0);
+                for(NSUInteger sub=1;sub<steps;sub++){
+                    double f=(double)sub/(double)steps;
+                    double lat=prev.coordinate.latitude+(curr.coordinate.latitude-prev.coordinate.latitude)*f;
+                    double lon=prev.coordinate.longitude+(curr.coordinate.longitude-prev.coordinate.longitude)*f;
+                    [pts addObject:[[CLLocation alloc]initWithLatitude:lat longitude:lon]];
+                }
+            }
+        }
+        [pts addObject:curr];
+    }
+    free(coords);
+    self.allRoutePoints=pts;
+    
+    if(self.routeLine)[self.map removeOverlay:self.routeLine];
+    self.routeLine=route.polyline;
+    [self.map addOverlay:self.routeLine];
+    [self.map setVisibleMapRect:route.polyline.boundingMapRect edgePadding:UIEdgeInsetsMake(40,40,40,40) animated:YES];
+    self.routeSummary.text=[NSString stringWithFormat:@"%.1f km · %ld min via %@",route.distance/1000.0,(long)ceil(route.expectedTravelTime/60.0),route.name.length?route.name:@"Fastest Route"];
+    
+    if(self.simulated){
+        // In simulation mode, immediately start movement!
+        [self beginRoute];
+    }else{
+        self.note=self.note?:@"Route calculated. Tap 'Start Navigation' to follow live GPS.";
+        [self updateTelemetryForLocation:pts.firstObject pointIndex:0];
+        [self refresh];
+    }
+}
+- (void)beginRoute{
+    if(!self.routeReady||!self.allRoutePoints.count){
+        [self planRoute];
+        return;
+    }
+    self.routeReady=NO;self.active=YES;self.navigationStarted=YES;self.lastInfo=NSProcessInfo.processInfo.systemUptime;
+    self.backgroundLocationEnabled=YES;
+    
+    @try {
+        self.permission.desiredAccuracy=kCLLocationAccuracyBestForNavigation;
+        self.permission.distanceFilter=kCLDistanceFilterNone;
+        self.permission.activityType=CLActivityTypeAutomotiveNavigation;
+        self.permission.allowsBackgroundLocationUpdates=YES;
+        self.permission.pausesLocationUpdatesAutomatically=NO;
+        if(@available(iOS 11.0, *)){
+            self.permission.showsBackgroundLocationIndicator=YES;
+        }
+    } @catch(NSException *e){}
+    
+    UIApplication.sharedApplication.idleTimerDisabled=YES;
+    [self.permission startUpdatingLocation];
+    
+    if(self.simulated){
+        self.note=@"Simulation active. Glasses HUD streams turn-by-turn.";
+        [self startSimulationTimer];
+    }else{
+        self.note=@"Live navigation active. Following phone GPS.";
+    }
+    [self refresh];
+}
+- (void)startSimulationTimer{
+    [self.simTimer invalidate];self.simTimer=nil;
+    if(self.simDispatchTimer){dispatch_source_cancel(self.simDispatchTimer);self.simDispatchTimer=nil;}
+    self.currentPointIndex=0;self.currentStepIndex=0;__weak typeof(self) weak=self;
+    
+    self.simDispatchTimer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
+    dispatch_source_set_timer(self.simDispatchTimer,dispatch_time(DISPATCH_TIME_NOW,800*NSEC_PER_MSEC),800*NSEC_PER_MSEC,50*NSEC_PER_MSEC);
+    dispatch_source_set_event_handler(self.simDispatchTimer,^{
+        [weak simTick];
+    });
+    dispatch_resume(self.simDispatchTimer);
+    
+    self.simTimer=[NSTimer timerWithTimeInterval:0.8 repeats:YES block:^(NSTimer *t){[weak simTick];}];
+    [[NSRunLoop mainRunLoop] addTimer:self.simTimer forMode:NSRunLoopCommonModes];
+}
+- (void)simTick{
+    if(!self.active||!self.allRoutePoints.count){
+        if(self.simDispatchTimer){dispatch_source_cancel(self.simDispatchTimer);self.simDispatchTimer=nil;}
+        [self.simTimer invalidate];self.simTimer=nil;return;
+    }
+    if(self.currentPointIndex<self.allRoutePoints.count-1){
+        self.currentPointIndex++;
+    }else{
+        if(self.simDispatchTimer){dispatch_source_cancel(self.simDispatchTimer);self.simDispatchTimer=nil;}
+        [self.simTimer invalidate];self.simTimer=nil;
+        [self setFrame:TIONavDisplay(@"arrived",15,@"Destination",0,0,0,YES)];
+        self.note=@"Arrived at destination!";[self refresh];return;
+    }
+    CLLocation *curr=self.allRoutePoints[self.currentPointIndex];
+    [self updateTelemetryForLocation:curr pointIndex:self.currentPointIndex];
+}
+- (NSArray *)localCoordinatesFromIndex:(NSUInteger)idx maxDistance:(double)maxDist{
+    if(!self.allRoutePoints.count)return @[];
+    NSMutableArray *out=[NSMutableArray new];double acc=0;
+    NSUInteger start = (idx >= 3) ? (idx - 3) : 0;
+    CLLocation *prev=self.allRoutePoints[start];
+    [out addObject:@[@(prev.coordinate.latitude),@(prev.coordinate.longitude)]];
+    for(NSUInteger i=start+1; i<self.allRoutePoints.count && out.count<40; i++){
+        CLLocation *curr=self.allRoutePoints[i];acc+=[curr distanceFromLocation:prev];
+        [out addObject:@[@(curr.coordinate.latitude),@(curr.coordinate.longitude)]];
+        prev=curr;
+        if(i > idx && acc>=maxDist)break;
+    }
+    return out;
+}
+- (void)updateTelemetryForLocation:(CLLocation *)curr pointIndex:(NSUInteger)ptIdx{
+    if(!self.allRoutePoints.count||!self.routeSteps.count)return;
+    double heading=0;
+    if(!self.simulated && curr.course >= 0 && curr.speed > 1.2){
+        heading = curr.course;
+    } else if(!self.simulated && self.permission.heading && self.permission.heading.headingAccuracy > 0){
+        heading = self.permission.heading.trueHeading >= 0 ? self.permission.heading.trueHeading : self.permission.heading.magneticHeading;
+    } else if(ptIdx<self.allRoutePoints.count-1){
+        CLLocation *next=self.allRoutePoints[ptIdx+1];
+        double dLon=(next.coordinate.longitude-curr.coordinate.longitude)*M_PI/180.0;
+        double y=sin(dLon)*cos(next.coordinate.latitude*M_PI/180.0);
+        double x=cos(curr.coordinate.latitude*M_PI/180.0)*sin(next.coordinate.latitude*M_PI/180.0)-sin(curr.coordinate.latitude*M_PI/180.0)*cos(next.coordinate.latitude*M_PI/180.0)*cos(dLon);
+        heading=atan2(y,x)*180.0/M_PI;if(heading<0)heading+=360.0;
+    }
+    MKRouteStep *step=self.routeSteps.firstObject;NSInteger stepIdx=self.currentStepIndex;double distToManeuver=100;
+    CLLocationCoordinate2D maneuverCoord = CLLocationCoordinate2DMake(0, 0);
+    while(stepIdx<(NSInteger)self.routeSteps.count){
+        MKRouteStep *s=self.routeSteps[stepIdx];
+        if(s.instructions.length&&![s.instructions isEqualToString:@"Depart"]){
+            step=s;NSUInteger sc=s.polyline.pointCount;
+            if(sc>0){
+                CLLocationCoordinate2D se;[s.polyline getCoordinates:&se range:NSMakeRange(sc-1,1)];
+                maneuverCoord = se;
+                CLLocation *sl=[[CLLocation alloc]initWithLatitude:se.latitude longitude:se.longitude];
+                distToManeuver=[curr distanceFromLocation:sl];
+                if(distToManeuver<25.0&&stepIdx+1<(NSInteger)self.routeSteps.count){
+                    stepIdx++;continue;
+                }
+            }
+            break;
+        }
+        stepIdx++;
+    }
+    self.currentStepIndex=stepIdx;
+    CLLocation *destLoc=self.allRoutePoints.lastObject;
+    double remainingMeters=[curr distanceFromLocation:destLoc];
+    double speed=(self.selectedTransport==TIONavigationDrive)?12.0:1.4;
+    double remainingSeconds=remainingMeters/speed;
+    NSInteger icon=IconForStep(step);
+    NSString *road=step.instructions.length?step.instructions:@"Follow Path";
+    // Quantize distance to avoid fractional jitter and tile churn:
+    NSInteger rawDist = (NSInteger)lround(distToManeuver);
+    NSInteger quantizedDist;
+    if(rawDist >= 200) quantizedDist = (rawDist / 20) * 20;
+    else if(rawDist >= 50) quantizedDist = (rawDist / 10) * 10;
+    else quantizedDist = MAX(0, ((rawDist + 2) / 5) * 5);
+    
+    // Quantize remaining summary so Tier 3 stays completely static between 50m blocks:
+    NSInteger quantizedRemaining = ((NSInteger)lround(remainingMeters) / 50) * 50;
+    NSInteger quantizedSeconds = ((NSInteger)lround(remainingSeconds) / 60) * 60;
+
+    // Check if the mini-map needs to recalculate/redraw:
+    // Quantize heading to 6-degree steps to eliminate fractional jitter:
+    double mapHeading = round(heading / 6.0) * 6.0;
+    CLLocation *lastMapLoc = [[CLLocation alloc] initWithLatitude:self.lastMapUserCoord.latitude longitude:self.lastMapUserCoord.longitude];
+    double mapDistMoved = [curr distanceFromLocation:lastMapLoc];
+    BOOL mapDirty = (self.lastMapUserCoord.latitude == 0 && self.lastMapUserCoord.longitude == 0) ||
+                    mapDistMoved >= 18.0 ||
+                    fabs(mapHeading - self.lastMapHeading) >= 6.0 ||
+                    self.currentStepIndex != self.lastMiniMapStepIdx;
+    
+    if(mapDirty){
+        self.lastMapUserCoord = curr.coordinate;
+        self.lastMapHeading = mapHeading;
+        self.cachedLocalCoords = [self localCoordinatesFromIndex:ptIdx maxDistance:350.0];
+        self.cachedMapRoads = [[TIONavRoadNetwork sharedNetwork] segmentsNear:curr.coordinate];
+        self.lastMiniMapStepIdx = self.currentStepIndex;
+        if(CLLocationCoordinate2DIsValid(maneuverCoord) && (maneuverCoord.latitude != 0 || maneuverCoord.longitude != 0)){
+            self.cachedManeuverCoord = @[ @(maneuverCoord.latitude), @(maneuverCoord.longitude) ];
+        } else {
+            self.cachedManeuverCoord = nil;
+        }
+        
+        NSDictionary *norm = TNVNormalizeCoordinates(self.cachedLocalCoords);
+        if(norm[@"navPoints"]) self.cachedNavPoints = norm[@"navPoints"];
+        self.lastMiniMapPtIdx = ptIdx;
+    }
+    
+    // Request surrounding road network from Overpass in background
+    [[TIONavRoadNetwork sharedNetwork] updateForCoordinate:curr.coordinate];
+    
+    NSMutableDictionary *frame=[TIONavDisplay(@"navigating",icon,road,quantizedDist,quantizedRemaining,quantizedSeconds,self.simulated) mutableCopy];
+    frame[@"remainingMeters"]=@(quantizedRemaining);
+    frame[@"remainingSeconds"]=@(quantizedSeconds);
+    if(self.cachedNavPoints)frame[@"navPoints"]=self.cachedNavPoints;
+    frame[@"navHeading"]=@((unsigned)lround(mapHeading));
+
+    // Even Realities G2 vector wireframe map telemetry (stable & jitter-free):
+    frame[@"userCoord"] = @[ @(self.lastMapUserCoord.latitude), @(self.lastMapUserCoord.longitude) ];
+    frame[@"heading"] = @(self.lastMapHeading);
+    if(self.cachedLocalCoords) frame[@"routeCoords"] = self.cachedLocalCoords;
+    if(self.cachedManeuverCoord) frame[@"maneuverCoord"] = self.cachedManeuverCoord;
+    if(self.cachedMapRoads.count > 0) frame[@"roadSegments"] = self.cachedMapRoads;
+    
+    self.lastInfo=NSProcessInfo.processInfo.systemUptime;self.staleShown=NO;
+    [self setFrame:frame];
+    [self.map setCenterCoordinate:curr.coordinate animated:YES];
+}
+- (void)locationManager:(CLLocationManager *)manager didUpdateLocations:(NSArray<CLLocation *> *)locations{
+    CLLocation *loc=locations.lastObject;if(!loc||loc.horizontalAccuracy<0||loc.horizontalAccuracy>150)return;
+    if(self.locating){self.locating=NO;[self.map setCenterCoordinate:loc.coordinate animated:YES];self.note=@"Location acquired.";[self refresh];return;}
+    if(!self.active||self.simulated||!self.allRoutePoints.count)return;
+    NSUInteger closest=0;double minDist=DBL_MAX;
+    for(NSUInteger i=0;i<self.allRoutePoints.count;i++){
+        double d=[loc distanceFromLocation:self.allRoutePoints[i]];
+        if(d<minDist){minDist=d;closest=i;}
+    }
+    self.currentPointIndex=closest;
+    [self updateTelemetryForLocation:loc pointIndex:closest];
+}
+- (void)locationManager:(CLLocationManager *)manager didUpdateHeading:(CLHeading *)newHeading{
+    if(!newHeading || newHeading.headingAccuracy < 0 || !self.active || self.simulated || !self.allRoutePoints.count) return;
+    if(self.currentPointIndex < self.allRoutePoints.count){
+        CLLocation *curr = self.allRoutePoints[self.currentPointIndex];
+        [self updateTelemetryForLocation:curr pointIndex:self.currentPointIndex];
+    }
+}
+- (MKOverlayRenderer *)mapView:(MKMapView *)map rendererForOverlay:(id<MKOverlay>)overlay{
+    if([overlay isKindOfClass:MKPolyline.class]){
+        MKPolylineRenderer *r=[[MKPolylineRenderer alloc]initWithPolyline:(MKPolyline *)overlay];
+        r.lineWidth=6;r.strokeColor=[UIColor colorWithRed:0.15 green:0.8 blue:0.4 alpha:0.9];return r;
+    }
+    return nil;
+}
+- (MKAnnotationView *)mapView:(MKMapView *)map viewForAnnotation:(id<MKAnnotation>)annotation{
+    if([annotation isKindOfClass:MKUserLocation.class])return nil;
+    MKMarkerAnnotationView *v=(MKMarkerAnnotationView *)[map dequeueReusableAnnotationViewWithIdentifier:@"navpin"];
+    if(!v)v=[[MKMarkerAnnotationView alloc]initWithAnnotation:annotation reuseIdentifier:@"navpin"];else v.annotation=annotation;
+    if(annotation==self.startPin){v.markerTintColor=UIColor.systemBlueColor;v.glyphImage=[UIImage systemImageNamed:@"play.fill"];}
+    else{v.markerTintColor=UIColor.systemRedColor;v.glyphImage=[UIImage systemImageNamed:@"mappin"];}
+    return v;
+}
+- (void)routeDetails{
+    if(!self.routeSteps.count){[self alert:@"No Route" message:@"Choose destination and plan route first."];return;}
+    NSMutableArray *lines=[NSMutableArray new];
+    for(MKRouteStep *s in self.routeSteps){
+        if(!s.instructions.length)continue;
+        [lines addObject:[NSString stringWithFormat:@"%lu. %@ (%.0f m)",(unsigned long)lines.count+1,s.instructions,s.distance]];
+        if(lines.count>=30)break;
+    }
+    [self alert:@"Route Steps" message:[lines componentsJoinedByString:@"\n"]];
+}
+- (void)fail:(NSString *)message{[self halt];self.note=message;[self setFrame:TIONavDisplay(@"error",0,@"",-1,-1,-1,self.simulated)];}
+- (void)halt{
+    if(self.simDispatchTimer){dispatch_source_cancel(self.simDispatchTimer);self.simDispatchTimer=nil;}
+    [self.simTimer invalidate];self.simTimer=nil;
+    UIApplication.sharedApplication.idleTimerDisabled=NO;
+    self.navigationStarted=NO;self.backgroundLocationEnabled=NO;[self endNavigationBackgroundTask];
+#if TIO_DISPLAY_PHONE
+    TDPPhoneNavigationStop();self.hudIconPixels=nil;self.hudIconType=0;self.crossPixels=nil;
+#endif
+    [self.subtitleHUD stop:@"Navigation stopped"];[self.teleHUD stop:@"Navigation stopped"];
+    self.generation++;self.locationGeneration++;self.locating=NO;
+    [self.permission stopUpdatingLocation];
+    self.routeReady=NO;self.active=NO;self.planning=NO;self.fixture=NO;self.rerouting=NO;
+    self.cachedNavPoints=nil;self.lastMiniMapPtIdx=0;self.lastMiniMapStepIdx=0;
+    if(self.routeLine){[self.map removeOverlay:self.routeLine];self.routeLine=nil;}
+}
+- (void)stopUser{[self halt];TIONavEnableNotices(NO);self.note=@"Navigation stopped.";self.routeSummary.text=@"Navigation ended · Plan a new route";self.display=TIONavDisplay(@"stopped",0,@"",-1,-1,-1,self.simulated);TIONavEnableDisplay(NO);[self refresh];}
+#include "NavigationBackground.inc"
+- (void)startFixture{[self halt];self.active=YES;self.fixture=YES;self.simulated=YES;self.fixtureStep=0;self.note=@"Offline fixture running";[self setFrame:TIONavDisplay(@"navigating",9,@"Simulated Avenue",160,850,720,YES)];}
+- (void)startWalking{[self planRoute];}
+- (void)startSimulation{[self planRoute];}
 - (void)refreshConnection{TIONavRefreshConnection();[self refresh];}
 - (void)subtitleCheck{[self stopUser];[self.navigationController pushViewController:TIOSubtitleHUDController() animated:YES];}
 - (BOOL)canStartSubtitle{
@@ -167,143 +580,21 @@ static void BootstrapKey(void){if(ReadNavKey().length)return;NSString *p=[NSBund
     return self.active&&self.simulated&&!self.fixture&&!self.planning&&!self.rerouting&&NSProcessInfo.processInfo.systemUptime-self.lastInfo<=15&&TIONavSubtitleText(self.display)&&![TIONewsTeleStatus()[@"active"] boolValue]&&![self.teleHUD.status[@"enabled"] boolValue]&&![transport[@"enabled"] boolValue]&&![transport[@"pending"] boolValue]&&![transport[@"noticePending"] boolValue]&&![transport[@"notices"] boolValue];
 }
 - (void)enableSubtitleHUD{
-    if(![self canStartSubtitle]){[self alert:@"先启动高德模拟并结束其他显示" message:@"等待手机出现模拟转向；退出提词、导航卡与自动通知。本轮不支持实际道路导航或离线夹具。"] ;return;}
-    if(![TIOSubtitleNavigationStatus()[@"available"] boolValue]){[self alert:@"字幕通道未就绪" message:@"先确认眼镜已连接。当前支持版本使用固化协议或已保存配置；若仍不可用，再在诊断页学习一次新配置。"] ;return;}
-    NSUInteger generation=self.generation;UIAlertController *a=[UIAlertController alertControllerWithTitle:@"眼镜当前已回首页且无任务？" message:@"确认录音、智记、提词、字幕、语音对话均已结束后开启。使用字幕纯文字通道，不发送录音启动；发现字幕音频消息就停止。4分钟保护，仅模拟验收。" preferredStyle:UIAlertControllerStyleAlert];
-    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [a addAction:[UIAlertAction actionWithTitle:@"已确认，开启字幕导航" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){if(generation!=self.generation||![self canStartSubtitle]||!TIOSubtitleConfirmIdle()){self.note=@"未开启：路线或会话状态变化，请先退出已有字幕";[self refresh];return;}[self.subtitleHUD startWithFrame:self.display at:NSProcessInfo.processInfo.systemUptime];[self refresh];[self.scroll setContentOffset:CGPointZero animated:YES];}]];[self presentViewController:a animated:YES completion:nil];
+    if(![self canStartSubtitle]){[self alert:@"Start Navigation First" message:@"Calculate a route first, then enable subtitles."];return;}
+    if(![TIOSubtitleNavigationStatus()[@"available"] boolValue]){[self alert:@"Subtitle Channel Not Ready" message:@"Verify glasses connection."];return;}
+    [self.subtitleHUD startWithFrame:self.display at:NSProcessInfo.processInfo.systemUptime];[self refresh];
 }
 - (void)manualHUD{[self stopUser];[self.navigationController pushViewController:TIOManualHUDController() animated:YES];}
 - (BOOL)subtitleBlocksOtherDisplay{
 #if TIO_DISPLAY_PHONE
- if([TDPPhoneNavigationStatus()[@"active"] boolValue]){[self alert:@"先停止原生HUD传图" message:@"停止后用眼镜实体键回到首页，再开启其他显示通道。"] ;return YES;}
+    if([TDPPhoneNavigationStatus()[@"active"] boolValue]){[self alert:@"Stop native HUD first." message:@"Stop Glasses HUD before switching channels."];return YES;}
 #endif
- if([TIOSubtitleNavigationStatus()[@"phase"] isEqual:@"idle"])return NO;[self alert:@"请先退出字幕会话" message:@"停止字幕后，在字幕显示检查页确认镜片已回首页，再切换其他显示通道。不会自动抢占。"] ;return YES;}
-- (void)enableTeleHUD{if([self subtitleBlocksOtherDisplay])return;if(!self.active||!self.simulated||self.fixture||self.planning||NSProcessInfo.processInfo.systemUptime-self.lastInfo>15){[self alert:@"先启动高德模拟导航" message:@"本轮只测真实高德回调→眼镜手动提词，不支持实际道路导航或离线夹具。收到手机模拟转向后再开启。"] ;return;}TIONavEnableNotices(NO);TIONavEnableDisplay(NO);if([self.teleHUD enable]){[self.teleHUD offer:self.display at:NSProcessInfo.processInfo.systemUptime];[self.teleHUD pumpAt:NSProcessInfo.processInfo.systemUptime];}[self refresh];[self.scroll setContentOffset:CGPointZero animated:YES];}
-- (void)testNotice{if([self subtitleBlocksOtherDisplay])return;[self.teleHUD stop:@"切换到通知测试"];TIONavTestNotice();[self refresh];[self.scroll setContentOffset:CGPointZero animated:YES];}
-- (void)enableNotices{if([self subtitleBlocksOtherDisplay])return;[self.teleHUD stop:@"切换到自动通知"];TIONavEnableNotices(YES);TIONavOfferDisplay(self.display);TIONavPump();[self refresh];[self.scroll setContentOffset:CGPointZero animated:YES];}
-- (void)enableGlasses{if([self subtitleBlocksOtherDisplay])return;UIAlertController *a=[UIAlertController alertControllerWithTitle:@"新增／更新专用导航卡？" message:@"只修改本扩展拥有的导航卡，不覆盖天气与待办。整卡连续更新仍需镜片验收。请先用模拟导航测试。" preferredStyle:UIAlertControllerStyleAlert];[a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];[a addAction:[UIAlertAction actionWithTitle:@"启用" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){if([self subtitleBlocksOtherDisplay])return;[self.teleHUD stop:@"切换到仪表盘导航卡"];TIONavEnableDisplay(YES);TIONavOfferDisplay(self.display);TIONavPump();[self refresh];}]];[self presentViewController:a animated:YES completion:nil];}
-- (void)halt{
-    self.navigationStarted=NO;self.backgroundLocationEnabled=NO;[self endNavigationBackgroundTask];
-#if TIO_DISPLAY_PHONE
-    TDPPhoneNavigationStop();self.hudIconPixels=nil;self.hudIconType=0;self.crossPixels=nil;
-#endif
-    [self.subtitleHUD stop:@"导航停止／切换路线"];
-    [self.teleHUD stop:@"导航停止／切换路线"];
-    self.generation++;self.locationGeneration++;self.locating=NO;[self.permission stopUpdatingLocation];self.routeReady=NO;self.active=NO;self.planning=NO;self.fixture=NO;self.rerouting=NO;
-#if TIO_AMAP_ENABLED
-    if(self.manager){BOOL owned=self.manager.delegate==self;[self.manager removeDataRepresentative:self];if(self.nativeHUD)[self.manager removeDataRepresentative:self.nativeHUD];if(owned){self.manager.allowsBackgroundLocationUpdates=NO;self.manager.pausesLocationUpdatesAutomatically=YES;self.manager.delegate=nil;[self.manager stopNavi];self.retiringManagerClass=TIONavigationManagerClass(self.sessionTransport);self.retiringManager=self.manager;}self.manager=nil;if(owned)dispatch_async(dispatch_get_main_queue(),^{[self finishRetiringManager:0];});}
-    [self.nativeHUD removeFromSuperview];self.nativeHUD=nil;
-    self.map.showsUserLocation=NO;
-#endif
+    return NO;
 }
-- (void)stopUser{[self halt];TIONavEnableNotices(NO);self.note=@"导航更新已停止并请求退出。字幕退出仍需镜片确认；未关闭时用实体按钮。不会自动重新开启。";self.routeSummary.text=@"导航已结束 · 可重新规划路线";self.display=TIONavDisplay(@"stopped",0,@"",-1,-1,-1,self.simulated);TIONavEnableDisplay(NO);[self refresh];}
-#include "NavigationBackground.inc"
-- (void)startFixture{[self halt];self.active=YES;self.fixture=YES;self.simulated=YES;self.fixtureStep=0;self.note=@"离线夹具：模拟转向顺序，不使用 Key、网络或定位";[self setFrame:TIONavDisplay(@"navigating",9,@"模拟测试道路",160,850,720,YES)];}
-- (void)startWalking{
-#if TIO_AMAP_ENABLED
-    [self start:NO];
-#else
-    [self consent];
-#endif
-}
-- (void)startSimulation{
-#if TIO_AMAP_ENABLED
-    [self start:YES];
-#else
-    [self consent];
-#endif
-}
-#if TIO_AMAP_ENABLED
-- (void)finishRetiringManager:(NSUInteger)attempt{
-    Class cls=self.retiringManagerClass;if(!cls)return;
-    if(self.retiringManager.delegate){self.retiringManagerClass=Nil;self.retiringManager=nil;self.note=@"旧引擎已被其他业务使用，不强行销毁。请先结束其他导航。";[self refresh];return;}
-    if([(id<TIONavigationManagerFactory>)cls destroyInstance]){self.retiringManagerClass=Nil;self.retiringManager=nil;[self refresh];return;}
-    if(attempt<3)dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC/10),dispatch_get_main_queue(),^{[self finishRetiringManager:attempt+1];});else{self.note=@"旧导航引擎尚未释放，暂不切换；请退出导航页面后重试或重启App。";[self refresh];}
-}
-- (void)openMap{
-    if(!self.initialized){AMapNaviManagerConfig *config=AMapNaviManagerConfig.sharedConfig;[config updatePrivacyShow:AMapPrivacyShowStatusDidShow privacyInfo:AMapPrivacyInfoStatusDidContain];[config updatePrivacyAgree:AMapPrivacyAgreeStatusDidAgree];[MAMapView updatePrivacyShow:AMapPrivacyShowStatusDidShow privacyInfo:AMapPrivacyInfoStatusDidContain];[MAMapView updatePrivacyAgree:AMapPrivacyAgreeStatusDidAgree];AMapServices.sharedServices.apiKey=ReadNavKey();AMapServices.sharedServices.enableHTTPS=YES;self.initialized=YES;
-        self.map=[MAMapView new];self.map.delegate=self;self.map.zoomLevel=15;self.map.centerCoordinate=CLLocationCoordinate2DMake(39.9087,116.3975);self.map.translatesAutoresizingMaskIntoConstraints=NO;[self.mapHost insertSubview:self.map atIndex:0];[NSLayoutConstraint activateConstraints:@[[self.map.leadingAnchor constraintEqualToAnchor:self.mapHost.leadingAnchor],[self.map.trailingAnchor constraintEqualToAnchor:self.mapHost.trailingAnchor],[self.map.topAnchor constraintEqualToAnchor:self.mapHost.topAnchor],[self.map.bottomAnchor constraintEqualToAnchor:self.mapHost.bottomAnchor]]];self.mapHint.hidden=YES;}
-    if(!self.hasSimulationStart)[self selectSimulationStart:self.map.centerCoordinate name:@"北京默认起点（可改）"];
-    self.note=@"单击地图选择终点；也可以搜索。模拟起点独立固定，拖动地图不会改变起点。";[self refresh];
-    [self continueMapAction:0];
-}
-- (void)mapView:(MAMapView *)map didSingleTappedAtCoordinate:(CLLocationCoordinate2D)c{[self selectMapCoordinate:c];}
-- (void)mapView:(MAMapView *)map didLongPressedAtCoordinate:(CLLocationCoordinate2D)c{[self selectMapCoordinate:c];}
-- (void)start:(BOOL)sim{
-    if(!self.initialized){[self consent];return;}
-    if(self.active||self.planning){[self alert:@"请先停止当前导航" message:@"避免两条路线的异步回调互相覆盖。"] ;return;}
-    if(!self.hasDestination){[self alert:@"先选择终点" message:@"搜索目的地、长按地图选点，或使用更多中的北京演示路线。"] ;return;}
-    if(sim){if(!self.hasSimulationStart){[self alert:@"请选择模拟起点" message:@"切换地图上方的“选模拟起点”，然后点击地图。"] ;return;}CLLocation *a=[[CLLocation alloc]initWithLatitude:self.simulationStart.latitude longitude:self.simulationStart.longitude],*b=[[CLLocation alloc]initWithLatitude:self.destination.latitude longitude:self.destination.longitude];if([a distanceFromLocation:b]<30){[self alert:@"起终点距离不足30米" message:@"切换“选模拟起点”后点击另一个位置，或重新选择终点。拖动地图本身不会改变起点。"] ;return;}}
-    if(!sim){CLAuthorizationStatus auth=self.permission.authorizationStatus;if(auth==kCLAuthorizationStatusNotDetermined){[self.permission requestWhenInUseAuthorization];self.note=@"允许定位后，请再次规划实时路线";[self refresh];return;}if(auth==kCLAuthorizationStatusDenied||auth==kCLAuthorizationStatusRestricted){[self alert:@"定位未授权" message:@"请在系统设置允许定位，或者先使用不需要实际定位的模拟导航。"] ;return;}}
-    if(self.retiringManagerClass){[self alert:@"正在释放旧导航引擎" message:@"请稍后再规划，不会带着旧路线切换模式。"] ;return;}
-    Class cls=TIONavigationManagerClass(self.selectedTransport);if(!cls){[self alert:@"未知出行方式" message:@"请重新选择步行、骑行或驾车。"] ;return;}
-    id<TIONavigationManager> manager=[(id<TIONavigationManagerFactory>)cls sharedInstance];if(!manager||manager.naviMode!=AMapNaviModeNone||(manager.delegate&&manager.delegate!=self)){[self alert:@"导航引擎被占用" message:@"请先结束其他导航。本扩展不会停止宿主已有导航，也不会偷偷退回步行算路。"] ;return;}
-    self.sessionTransport=self.selectedTransport;
-    self.manager=manager;manager.delegate=self;[manager addDataRepresentative:self];manager.isUseInternalTTS=NO;manager.screenAlwaysBright=NO;manager.allowsBackgroundLocationUpdates=NO;
-#if TIO_DISPLAY_PHONE
-    [self attachNativeHUD];
-#endif
-    self.active=YES;self.planning=YES;self.simulated=sim;self.fixture=NO;self.gpsWeak=NO;self.staleShown=NO;NSUInteger generation=++self.generation;
-    self.note=[NSString stringWithFormat:@"%@%@算路中（%@）",TIONavigationModeTitle(self.sessionTransport),sim?@"模拟":@"实时",sim?@"联网，不使用实际定位":@"使用手机定位，开始后支持后台"];[self setFrame:TIONavDisplay(@"planning",0,@"",-1,-1,-1,sim)];
-    AMapNaviPoint *end=[AMapNaviPoint locationWithLatitude:self.destination.latitude longitude:self.destination.longitude];
-    BOOL submitted=TIONavigationCalculate(manager,self.sessionTransport,sim,[AMapNaviPoint locationWithLatitude:self.simulationStart.latitude longitude:self.simulationStart.longitude],end);
-    if(!sim)self.map.showsUserLocation=YES;
-    if(!submitted){[self fail:@"SDK 未接受算路请求，请核对 Key、网络和定位"] ;return;}
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,45*NSEC_PER_SEC),dispatch_get_main_queue(),^{if(self.generation==generation&&self.planning)[self fail:@"45 秒未收到算路结果；已停止，本次结果未知"] ;});
-}
-- (void)fail:(NSString *)message{[self halt];self.note=message;[self setFrame:TIONavDisplay(@"error",0,@"",-1,-1,-1,self.simulated)];}
-- (void)navigationRouteSuccess:(id<TIONavigationManager>)manager{dispatch_async(dispatch_get_main_queue(),^{if(manager!=self.manager||!self.active)return;BOOL first=self.planning;self.planning=NO;self.rerouting=NO;self.lastInfo=NSProcessInfo.processInfo.systemUptime;self.staleShown=NO;[self drawRoute:manager.naviRoute];if(first){self.routeReady=YES;self.note=@"路线已准备，核对地图后点击开始。尚未向眼镜发送导航。";self.routeSummary.text=[NSString stringWithFormat:@"%.1f 公里   ·   约 %ld 分钟",manager.naviRoute.routeLength/1000.0,(long)MAX(1,(manager.naviRoute.routeTime+59)/60)];self.display=TIONavDisplay(@"ready",0,@"",-1,manager.naviRoute.routeLength,manager.naviRoute.routeTime,self.simulated);}else{self.note=@"已重新规划路线，请以手机指引为准；眼镜显示若已停止需手动开启。";}[self refresh];});}
-- (void)navigationManager:(id<TIONavigationManager>)manager onCalculateRouteFailure:(NSError *)error{dispatch_async(dispatch_get_main_queue(),^{if(manager==self.manager&&self.active)[self fail:[NSString stringWithFormat:@"高德算路失败（code=%ld），检查 Key 服务权限／Bundle 绑定、网络与路线",(long)error.code]];});}
-- (void)navigationManager:(id<TIONavigationManager>)manager error:(NSError *)error{dispatch_async(dispatch_get_main_queue(),^{if(manager==self.manager&&self.active)[self fail:[NSString stringWithFormat:@"高德引擎错误 code=%ld",(long)error.code]];});}
-- (void)navigationManager:(id<TIONavigationManager>)manager updateNaviInfo:(AMapNaviInfo *)info{
- if(!info)return;NSMutableDictionary *frame=[TIONavDisplay(@"navigating",info.iconType,info.nextRoadName,info.segmentRemainDistance,info.routeRemainDistance,info.routeRemainTime,self.simulated) mutableCopy];frame[@"segment"]=@(info.currentSegmentIndex);frame[@"remainingMeters"]=@(info.routeRemainDistance);frame[@"remainingSeconds"]=@(info.routeRemainTime);
- NSInteger segment=info.currentSegmentIndex,link=info.currentLinkIndex,point=info.currentPointIndex;
- dispatch_async(dispatch_get_main_queue(),^{if(manager!=self.manager||!self.active||self.routeReady||self.planning||self.rerouting)return;
-  NSArray<AMapNaviSegment *> *segments=manager.naviRoute.routeSegments;NSMutableArray *coords=[NSMutableArray new];
-  if(segment>=0&&segment<(NSInteger)segments.count&&link>=0&&point>=0){
-   for(NSUInteger si=(NSUInteger)segment;si<MIN(segments.count,(NSUInteger)segment+2)&&coords.count<512;si++){
-    NSArray<AMapNaviLink *> *links=segments[si].links;
-    for(NSUInteger li=si==(NSUInteger)segment?(NSUInteger)link:0;li<links.count&&coords.count<512;li++){
-     NSArray<AMapNaviPoint *> *points=links[li].coordinates;
-     for(NSUInteger pi=si==(NSUInteger)segment&&li==(NSUInteger)link?(NSUInteger)point:0;pi<points.count&&coords.count<512;pi++){AMapNaviPoint *p=points[pi];[coords addObject:@[@(p.latitude),@(p.longitude)]];}
-    }
-   }
-  }
-  [frame addEntriesFromDictionary:TNVNormalizeCoordinates(coords)];self.lastInfo=NSProcessInfo.processInfo.systemUptime;self.staleShown=NO;if(!self.gpsWeak)[self setFrame:frame];
- });
-}
-- (void)navigationReroute:(id<TIONavigationManager>)manager{dispatch_async(dispatch_get_main_queue(),^{if(manager==self.manager&&self.active){self.rerouting=YES;self.note=@"偏航，等待高德重新规划";[self setFrame:TIONavDisplay(@"rerouting",0,@"",-1,-1,-1,self.simulated)];}});}
-- (void)drawRoute:(AMapNaviRoute *)route{NSArray<AMapNaviPoint *> *points=route.routeCoordinates;if(points.count<2||points.count>100000)return;CLLocationCoordinate2D *coords=calloc(points.count,sizeof(CLLocationCoordinate2D));if(!coords)return;for(NSUInteger i=0;i<points.count;i++)coords[i]=CLLocationCoordinate2DMake(points[i].latitude,points[i].longitude);if(self.routeLine)[self.map removeOverlay:self.routeLine];self.routeLine=[MAPolyline polylineWithCoordinates:coords count:points.count];free(coords);[self.map addOverlay:self.routeLine];[self.map setVisibleMapRect:self.routeLine.boundingMapRect edgePadding:UIEdgeInsetsMake(30,25,30,25) animated:YES];}
-- (MAOverlayRenderer *)mapView:(MAMapView *)map rendererForOverlay:(id<MAOverlay>)overlay{if([overlay isKindOfClass:MAPolyline.class]){MAPolylineRenderer *r=[[MAPolylineRenderer alloc]initWithPolyline:overlay];r.lineWidth=6;r.strokeColor=UIColor.systemIndigoColor;return r;}return nil;}
-- (void)navigationManager:(id<TIONavigationManager>)manager updateGPSSignalStrength:(AMapNaviGPSSignalStrength)strength{dispatch_async(dispatch_get_main_queue(),^{if(manager!=self.manager||!self.active||self.simulated)return;self.gpsWeak=strength!=AMapNaviGPSSignalStrengthStrong&&strength!=AMapNaviGPSSignalStrengthSmartPos;if(self.gpsWeak)[self setFrame:TIONavDisplay(@"weak",0,@"",-1,-1,-1,NO)];});}
-- (void)arrived:(id<TIONavigationManager>)manager{dispatch_async(dispatch_get_main_queue(),^{if(manager!=self.manager||!self.active)return;[self halt];self.note=@"已到达；导航已停止，10 秒后清理本次导航卡";[self setFrame:TIONavDisplay(@"arrived",0,@"",0,0,0,self.simulated)];NSUInteger g=self.generation;dispatch_after(dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_SEC),dispatch_get_main_queue(),^{if(g==self.generation)TIONavEnableDisplay(NO);});});}
-- (void)walkManagerOnCalculateRouteSuccess:(AMapNaviWalkManager *)m{[self navigationRouteSuccess:(id)m];}
-- (void)walkManager:(AMapNaviWalkManager *)m onCalculateRouteFailure:(NSError *)e{[self navigationManager:(id)m onCalculateRouteFailure:e];}
-- (void)walkManager:(AMapNaviWalkManager *)m error:(NSError *)e{[self navigationManager:(id)m error:e];}
-- (void)walkManager:(AMapNaviWalkManager *)m updateNaviInfo:(AMapNaviInfo *)info{[self navigationManager:(id)m updateNaviInfo:info];}
-- (void)walkManager:(AMapNaviWalkManager *)m updateGPSSignalStrength:(AMapNaviGPSSignalStrength)s{[self navigationManager:(id)m updateGPSSignalStrength:s];}
-- (void)walkManagerNeedRecalculateRouteForYaw:(AMapNaviWalkManager *)m{[self navigationReroute:(id)m];}
-- (void)walkManagerDidEndEmulatorNavi:(AMapNaviWalkManager *)m{[self arrived:(id)m];}
-- (void)walkManagerOnArrivedDestination:(AMapNaviWalkManager *)m{[self arrived:(id)m];}
-- (void)rideManagerOnCalculateRouteSuccess:(AMapNaviRideManager *)m{[self navigationRouteSuccess:(id)m];}
-- (void)rideManager:(AMapNaviRideManager *)m onCalculateRouteFailure:(NSError *)e{[self navigationManager:(id)m onCalculateRouteFailure:e];}
-- (void)rideManager:(AMapNaviRideManager *)m error:(NSError *)e{[self navigationManager:(id)m error:e];}
-- (void)rideManager:(AMapNaviRideManager *)m updateNaviInfo:(AMapNaviInfo *)info{[self navigationManager:(id)m updateNaviInfo:info];}
-- (void)rideManager:(AMapNaviRideManager *)m updateGPSSignalStrength:(AMapNaviGPSSignalStrength)s{[self navigationManager:(id)m updateGPSSignalStrength:s];}
-- (void)rideManagerNeedRecalculateRouteForYaw:(AMapNaviRideManager *)m{[self navigationReroute:(id)m];}
-- (void)rideManagerDidEndEmulatorNavi:(AMapNaviRideManager *)m{[self arrived:(id)m];}
-- (void)rideManagerOnArrivedDestination:(AMapNaviRideManager *)m{[self arrived:(id)m];}
-- (void)driveManagerOnCalculateRouteSuccess:(AMapNaviDriveManager *)m{[self navigationRouteSuccess:(id)m];}
-- (void)driveManager:(AMapNaviDriveManager *)m onCalculateRouteFailure:(NSError *)e{[self navigationManager:(id)m onCalculateRouteFailure:e];}
-- (void)driveManager:(AMapNaviDriveManager *)m error:(NSError *)e{[self navigationManager:(id)m error:e];}
-- (void)driveManager:(AMapNaviDriveManager *)m updateNaviInfo:(AMapNaviInfo *)info{[self navigationManager:(id)m updateNaviInfo:info];}
-- (void)driveManager:(AMapNaviDriveManager *)m updateGPSSignalStrength:(AMapNaviGPSSignalStrength)s{[self navigationManager:(id)m updateGPSSignalStrength:s];}
-- (void)driveManagerNeedRecalculateRouteForYaw:(AMapNaviDriveManager *)m{[self navigationReroute:(id)m];}
-- (void)driveManagerDidEndEmulatorNavi:(AMapNaviDriveManager *)m{[self arrived:(id)m];}
-- (void)driveManagerOnArrivedDestination:(AMapNaviDriveManager *)m{[self arrived:(id)m];}
-- (void)driveManagerNeedRecalculateRouteForTrafficJam:(AMapNaviDriveManager *)m{[self navigationReroute:(id)m];}
-#endif
+- (void)enableTeleHUD{if([self subtitleBlocksOtherDisplay])return;TIONavEnableNotices(NO);TIONavEnableDisplay(NO);if([self.teleHUD enable]){[self.teleHUD offer:self.display at:NSProcessInfo.processInfo.systemUptime];[self.teleHUD pumpAt:NSProcessInfo.processInfo.systemUptime];}[self refresh];}
+- (void)testNotice{if([self subtitleBlocksOtherDisplay])return;[self.teleHUD stop:@"Switch to notification testing"];TIONavTestNotice();[self refresh];}
+- (void)enableNotices{if([self subtitleBlocksOtherDisplay])return;[self.teleHUD stop:@"Switch to automatic notifications"];TIONavEnableNotices(YES);TIONavOfferDisplay(self.display);TIONavPump();[self refresh];}
+- (void)enableGlasses{if([self subtitleBlocksOtherDisplay])return;TIONavEnableDisplay(YES);TIONavOfferDisplay(self.display);TIONavPump();[self refresh];}
 #include "NavigationDisplayHUD.inc"
 #include "NavigationWorkspace.inc"
 @end

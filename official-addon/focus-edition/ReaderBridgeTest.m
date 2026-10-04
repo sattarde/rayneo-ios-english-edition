@@ -20,7 +20,7 @@ static NSDictionary *Reply(unsigned event,unsigned result,uint32_t seq,uint32_t 
 @end
 static void Pump(void){[NSThread sleepForTimeInterval:.13];[bridge pump];}
 int main(int argc,const char **argv){@autoreleasepool{trace=[NSMutableArray new];bridge=[TWReaderBridge new];__block unsigned commands=0;bridge.command=^(NSDictionary *q){commands++;};[bridge open];for(int i=0;i<4;i++)Pump();assert(bridge.active&&commands==1);
- NSArray *lines=TWReadingLines(@"这是手机和固件的端到端合成验证。\n每次只传有限窗口，不是整本书。\n最后校验7392。");NSData *body=TWReaderWindow(lines,@"原创验证正文",1,0,480,YES);assert(body);[bridge sendBody:body];for(int i=0;i<30&&bridge.busy;i++)Pump();assert(!bridge.busy&&state.valid&&state.speed==480);
+ NSArray *lines=TWReadingLines(@"This is an end-to-end synthetic verification of the phone and firmware. \n only transfers a limited window at a time, not the entire book. \n last check 7392.");NSData *body=TWReaderWindow(lines,@"Original verification text",1,0,480,YES);assert(body);[bridge sendBody:body];for(int i=0;i<30&&bridge.busy;i++)Pump();assert(!bridge.busy&&state.valid&&state.speed==480);
  [bridge settings:120 automatic:NO];for(int i=0;i<10&&bridge.busy;i++)Pump();assert(state.speed==120&&!state.automatic);[bridge close];for(int i=0;i<10&&bridge.busy;i++)Pump();assert(!bridge.active&&!state.active&&cleanups==trace.count);
  NSArray *replayPackets=[trace copy];
  // Physical exit retires this SID. Reopening must establish a NEW SID even

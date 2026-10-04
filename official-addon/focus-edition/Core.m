@@ -24,10 +24,10 @@ BOOL TIOIsVoiceExitCommand(NSString *text) {
     NSMutableCharacterSet *trim=[NSCharacterSet.whitespaceAndNewlineCharacterSet mutableCopy];
     [trim addCharactersInString:@"，。！？,.!?、：:"];
     NSString *s=[text stringByTrimmingCharactersInSet:trim];
-    if([s hasPrefix:@"小雷小雷"])s=[[s substringFromIndex:4] stringByTrimmingCharactersInSet:trim];
+    if([s hasPrefix:@"Xiao Lei Xiao Lei"])s=[[s substringFromIndex:4] stringByTrimmingCharactersInSet:trim];
     s=[[s componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] componentsJoinedByString:@""];
     // Exact utterances only. Never use containsString on task or chat content.
-    return [@[@"退下吧",@"退下",@"关闭",@"没事了",@"关闭窗口",@"关闭对话",@"结束对话",@"退出对话",@"不用了",@"就这样吧"] containsObject:s];
+    return [@[@"Back off",@"stand down",@"Close",@"It's okay",@"close window",@"Close conversation",@"end conversation",@"Exit conversation",@"No",@"That's it"] containsObject:s];
 }
 
 NSString *TIOAppendDelta(NSString *previous, NSString *current) {
@@ -48,7 +48,7 @@ NSURL *TIOValidateEndpoint(NSString *input) {
 }
 
 NSString *TIOSystemPrompt(NSString *model) {
-    return [NSString stringWithFormat:@"用简洁中文回答，内容将显示在智能眼镜上。\n你当前使用的模型名称（客户端配置的模型 ID）是：%@。当用户询问你的模型名称时，请准确说明这个模型 ID。\n结合请求中提供的最近历史对话保持上下文连贯；不要编造未提供的用户身份或聊天历史。\n%@",model,TIOProfilePrompt(TIOProfile())];
+    return [NSString stringWithFormat:@"Answer in concise Chinese and the content will be displayed on the smart glasses. \nThe model name you are currently using (the model ID configured by the client) is: %@. When users ask for your model name, state this model ID exactly. \n Keeps context coherent by incorporating recent conversation history provided in the request; do not invent user identities or chat history that are not provided. \n%@",model,TIOProfilePrompt(TIOProfile())];
 }
 
 @implementation TIOConversationHistory {
@@ -142,7 +142,7 @@ NSDictionary *TIOChatRequestWithHistory(NSString *model, NSString *question, NSA
 @implementation TIOTranscriptArchive
 - (instancetype)initWithDirectory:(NSURL *)directory { if ((self=[super init])) _directory=directory; return self; }
 - (NSURL *)journal { return [_directory URLByAppendingPathComponent:@"final-transcripts.json"]; }
-- (NSError *)failure { return [NSError errorWithDomain:@"TurboIOPrivateArchive" code:1 userInfo:@{NSLocalizedDescriptionKey:@"归档读取或写入失败；原数据没有删除。"}]; }
+- (NSError *)failure { return [NSError errorWithDomain:@"TurboIOPrivateArchive" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Archive reading or writing failed; original data was not deleted."}]; }
 - (NSMutableArray *)load:(NSError **)error {
     NSURL *file=[self journal];
     if (![NSFileManager.defaultManager fileExistsAtPath:file.path]) return [NSMutableArray array];
@@ -178,10 +178,10 @@ NSDictionary *TIOChatRequestWithHistory(NSString *model, NSString *question, NSA
 - (NSArray<NSURL *> *)exportAt:(NSDate *)date error:(NSError **)error {
     @synchronized(self) {
         NSArray *rows=[self load:error]; if (!rows) return nil;
-        if(!rows.count) {if(error)*error=[NSError errorWithDomain:@"TurboIOPrivateArchive" code:2 userInfo:@{NSLocalizedDescriptionKey:@"暂无本扩展保存的最终文字。请先开启旁路保存，再使用官方全天智记；旧历史记录暂未导入。"}];return nil;}
+        if(!rows.count) {if(error)*error=[NSError errorWithDomain:@"TurboIOPrivateArchive" code:2 userInfo:@{NSLocalizedDescriptionKey:@"There is currently no final text saved for this extension. Please enable bypass saving first before using the official All-Tianzhiji; old historical records have not been imported yet."}];return nil;}
         NSURL *folder=[_directory URLByAppendingPathComponent:[@"exports/" stringByAppendingString:NSUUID.UUID.UUIDString] isDirectory:YES];
         if(![NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:error]) return nil;
-        NSMutableString *md=[NSMutableString stringWithString:@"# 全天智记导出\n\n来源：启用私用扩展后旁路保存的官方最终文字。不代表完整历史或逐字准确稿。\n\n"];
+        NSMutableString *md=[NSMutableString stringWithString:@"# Quantian Zhiji export\n\nSource: The official final text saved by bypass after enabling private extensions. It does not represent a complete history or a verbatim accurate draft. \n\n"];
         NSMutableArray *publicRows=[NSMutableArray array];
         for(NSDictionary *row in rows) {
             [publicRows addObject:@{@"at":row[@"at"],@"role":row[@"role"],@"text":row[@"text"]}];
@@ -189,7 +189,7 @@ NSDictionary *TIOChatRequestWithHistory(NSString *model, NSString *question, NSA
             for(NSString *line in [row[@"text"] componentsSeparatedByString:@"\n"]) [md appendFormat:@"> %@\n",line];
             [md appendString:@"\n"];
         }
-        NSURL *markdown=[folder URLByAppendingPathComponent:@"全天智记.md"], *json=[folder URLByAppendingPathComponent:@"全天智记.json"];
+        NSURL *markdown=[folder URLByAppendingPathComponent:@"All-day wisdom.md"], *json=[folder URLByAppendingPathComponent:@"All-day wisdom.json"];
         NSData *data=[NSJSONSerialization dataWithJSONObject:publicRows options:NSJSONWritingPrettyPrinted error:error];
         if(!data || ![data writeToURL:json options:NSDataWritingAtomic error:error] || ![md writeToURL:markdown atomically:YES encoding:NSUTF8StringEncoding error:error]) return nil;
         for(NSURL *file in @[markdown,json]) [NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:file.path error:nil];

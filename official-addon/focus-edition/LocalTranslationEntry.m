@@ -20,7 +20,7 @@ static BOOL TIOLoadLocalTranslation(void) {
                     }
                     NSString *sid=[args[@"sid"] isKindOfClass:NSString.class]?args[@"sid"]:@"";
                     if([operation isEqual:@"text"]&&[args[@"text"] isKindOfClass:NSString.class])return @{@"ok":@(TIOSubtitleNavigationText(sid,args[@"text"]))};
-                    if([operation isEqual:@"stop"])TIOSubtitleNavigationStop(sid,@"用户结束本机字幕");
+                    if([operation isEqual:@"stop"])TIOSubtitleNavigationStop(sid,@"User stopped local subtitles");
                     return @{};
                 };
                 ((void(*)(id,SEL,id))objc_msgSend)(bridge,configure,[callback copy]);
@@ -37,8 +37,8 @@ void TIOOpenLocalTranslation(UIViewController *presenter) {
         UIViewController *page=((id(*)(id,SEL))objc_msgSend)(cls,factory);
         if([page isKindOfClass:UIViewController.class]){[presenter.navigationController pushViewController:page animated:YES];return;}
     }
-    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"本地翻译未加载" message:@"需要 iOS 26 及以上、自行构建的本地翻译模块及模型资源。原有语音与字幕没有被接管。" preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:nil]];
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Local Translation Not Loaded" message:@"Requires iOS 26+ and built local translation module and model resources." preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
     [presenter presentViewController:alert animated:YES completion:nil];
 }
 void TIOCaptionRunFixedProbeIfRequested(void) {

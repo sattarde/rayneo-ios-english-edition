@@ -47,26 +47,26 @@ static NSData *Luminance(NSURL *url){
 @end
 @implementation TIOImageUploadPage
 - (void)viewDidLoad{
- [super viewDidLoad];self.title=@"图片传输 · 实验";self.note=@"仅本机选图与预览；原厂固件和当前 R3 头像固件不支持接收。需要新的 AP 模块和已验证路由。";
+ [super viewDidLoad];self.title=@"Image Transfer Lab";self.note=@"Only local image selection and preview; original firmware and current R3 avatar firmware do not support reception. Requires new AP module and verified routing.";
  self.tableView.rowHeight=UITableViewAutomaticDimension;self.tableView.estimatedRowHeight=80;
  __weak typeof(self) weak=self;self.client.changed=^{[weak.tableView reloadData];};
  self.timer=[NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t){[weak.client tick:NSProcessInfo.processInfo.systemUptime];}];
 }
 #if TIO_IMAGE_RX_LAB
 - (void)armManualSession{
- if(!self.pixels){self.note=@"先在手机选图，再在眼镜打开 Turbo Image RX；这样不会浪费眼镜 120 秒的窗口。";[self.tableView reloadData];return;}
- if(LabClient.task.length){self.note=@"本实验每次 App 启动仅提交一张。已有任务不自动重发；先确认结束并退出眼镜页面，再重启 App 做下一轮。";[self.tableView reloadData];return;}
+ if(!self.pixels){self.note=@"First select an image on your phone, and then open Turbo Image RX on your glasses; this will not waste the 120-second window of your glasses.";[self.tableView reloadData];return;}
+ if(LabClient.task.length){self.note=@"In this experiment, only one submission is submitted each time the app is launched. Existing tasks will not be automatically resent; first confirm the completion and exit the glasses page, then restart the app for the next round.";[self.tableView reloadData];return;}
  NSString *device=TIOProtocolDevice();
- if(!device.length){self.note=@"没有当前官方协议对象。请先在官方设备页确认连接；不会创建第二个蓝牙连接。";[self.tableView reloadData];return;}
- UIAlertController *a=[UIAlertController alertControllerWithTitle:@"N8 图片接收 · 人工会话" message:@"仅用于新 N8 / N8W 测试固件。必须亲眼看到眼镜 Turbo Image RX 页上的 SID；原厂/R3 不支持。输入当前 SID 后 30 秒内点发送。本轮最多一张，SDK 收到文件不代表镜片显示，需人工验收。不会触发 OTA。" preferredStyle:UIAlertControllerStyleAlert];
- [a addTextFieldWithConfigurationHandler:^(UITextField *f){f.placeholder=@"眼镜显示的十进制 SID";f.keyboardType=UIKeyboardTypeNumberPad;}];
- [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+ if(!device.length){self.note=@"There is no current official protocol object. Please confirm the connection on the official device page first; a second Bluetooth connection will not be created.";[self.tableView reloadData];return;}
+ UIAlertController *a=[UIAlertController alertControllerWithTitle:@"N8 picture reception · human conversation" message:@"Only for new N8/N8W test firmware. Must see SID on glasses Turbo Image RX page; not supported by stock/R3. Click Send within 30 seconds after entering the current SID. There is a maximum of one file in this round. The receipt of the file by the SDK does not mean that the lens is displayed and requires manual acceptance. OTA will not be triggered." preferredStyle:UIAlertControllerStyleAlert];
+ [a addTextFieldWithConfigurationHandler:^(UITextField *f){f.placeholder=@"Decimal SID displayed by glasses";f.keyboardType=UIKeyboardTypeNumberPad;}];
+ [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
  __weak typeof(self) weak=self;
- [a addAction:[UIAlertAction actionWithTitle:@"已看到 SID，开启本轮" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+ [a addAction:[UIAlertAction actionWithTitle:@"SID has been seen, start this round" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
   if(!weak)return;
   NSString *text=a.textFields.firstObject.text;NSCharacterSet *bad=[[NSCharacterSet characterSetWithCharactersInString:@"0123456789"] invertedSet];
   unsigned long long sid=text.longLongValue;
-  if(!text.length||text.length>10||[text rangeOfCharacterFromSet:bad].location!=NSNotFound||!sid||sid>UINT32_MAX||![device isEqual:TIOProtocolDevice()]){weak.note=@"SID 无效或设备已改变，未开启。";[weak.tableView reloadData];return;}
+  if(!text.length||text.length>10||[text rangeOfCharacterFromSet:bad].location!=NSNotFound||!sid||sid>UINT32_MAX||![device isEqual:TIOProtocolDevice()]){weak.note=@"The SID is invalid or the device has been changed and is not turned on.";[weak.tableView reloadData];return;}
   NSURL *root=[NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/TurboIOPrivateAddon/ImageRXLab"] isDirectory:YES];
   LabCarrier=TIOImageUploadOfficialTransport(root,device);
   TIOImageUploadTransport *carrier=LabCarrier;
@@ -75,7 +75,7 @@ static NSData *Luminance(NSURL *url){
   }];
   if(![LabClient authorizeDevice:device session:(uint32_t)sid at:NSProcessInfo.processInfo.systemUptime])return;
   weak.client=LabClient;LabClient.changed=^{[weak.tableView reloadData];};
-  weak.note=@"人工 SID 实验已开启，请在 30 秒内点发送。接收是否成功看镜片图片及 #1，自动显示 ACK 尚未接入。";[weak.tableView reloadData];
+  weak.note=@"The artificial SID experiment is enabled, please click Send within 30 seconds. Check whether the reception is successful. Look at the lens picture and #1, it will automatically show that ACK has not been connected yet.";[weak.tableView reloadData];
  }]];[self presentViewController:a animated:YES completion:nil];
 }
 #endif
@@ -84,24 +84,24 @@ static NSData *Luminance(NSURL *url){
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)p{
  UITableViewCell *c=[[UITableViewCell alloc]initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
  c.textLabel.numberOfLines=c.detailTextLabel.numberOfLines=0;
- NSArray *titles=@[@"1 · 从照片选择",@"或从文件选择 PNG / JPEG",[NSString stringWithFormat:@"2 · 传输预览（%d×%d）",TIO_W,TIO_H],@"3 · 发送到眼镜",@"接收与显示状态",@"原图解码是另一项测试"];
+ NSArray *titles=@[@"1 · Select from photos",@"Or select PNG / JPEG from file",[NSString stringWithFormat:@"2·Transmission preview (%d×%d)",TIO_W,TIO_H],@"3 · Send to glasses",@"Receive and display status",@"Original image decoding is another test"];
  c.textLabel.text=titles[p.row];
- if(p.row==2){c.imageView.image=self.preview;c.detailTextLabel.text=self.pixels?[NSString stringWithFormat:@"%d KiB 灰度像素；等比缩小留黑边。协议 v%d，需匹配本轮 AP。",TIO_PIXELS/1024,TIO_VERSION]:@"尚未选图";}
- if(p.row==3){BOOL ready=[self.client.state isEqual:@"ready"]||[self.client.state isEqual:@"render_submitted"];c.textLabel.textColor=(ready&&self.pixels&&!self.loading)?UIColor.systemBlueColor:UIColor.secondaryLabelColor;c.detailTextLabel.text=ready?@"仅发送当前图片，不启动 OTA，不上传云端":@"等待已验证的 AP 图片接收会话；当前不会盲发";}
+ if(p.row==2){c.imageView.image=self.preview;c.detailTextLabel.text=self.pixels?[NSString stringWithFormat:@"%d KiB grayscale pixels; scaled down to leave black edges. Protocol v%d needs to match the AP of this round.",TIO_PIXELS/1024,TIO_VERSION]:@"No picture selected yet";}
+ if(p.row==3){BOOL ready=[self.client.state isEqual:@"ready"]||[self.client.state isEqual:@"render_submitted"];c.textLabel.textColor=(ready&&self.pixels&&!self.loading)?UIColor.systemBlueColor:UIColor.secondaryLabelColor;c.detailTextLabel.text=ready?@"Only send the current picture, do not start OTA, do not upload to the cloud":@"Waiting for authenticated AP image reception session; currently no blind sending";}
  if(p.row==4){NSString *state=self.client.state?:@"receiver_not_verified";NSString *detail=self.note?:@"";
-  if([state isEqual:@"submission_failed"])detail=@"手机提交失败，未确认眼镜收到；诊断已保存。请勿重复点发送。";
-  else if([state isEqual:@"file_failed"])detail=@"官方文件通道返回失败，未确认显示。请勿重复发送。";
-  else if([state isEqual:@"timeout_result_unknown"])detail=@"等待回执超时，结果未知；查看镜片 #1 和图片，不自动重发。";
-  else if([state isEqual:@"file_received_waiting_renderer"])detail=@"文件成功回执已收到；没有自动显示 ACK，请检查镜片图片和 #1。";
+  if([state isEqual:@"submission_failed"])detail=@"The mobile phone submission failed and the receipt of the glasses was not confirmed; the diagnosis has been saved. Please do not click send twice.";
+  else if([state isEqual:@"file_failed"])detail=@"The official document channel failed to return and no confirmation was displayed. Please do not resend.";
+  else if([state isEqual:@"timeout_result_unknown"])detail=@"Timed out while waiting for acknowledgment, result unknown; view lens #1 and pictures, will not automatically resend.";
+  else if([state isEqual:@"file_received_waiting_renderer"])detail=@"File success acknowledgment received; no automatic ACK showing, please check lens picture and #1.";
   c.detailTextLabel.text=[NSString stringWithFormat:@"%@\n%@",state,detail];}
- if(p.row==5)c.detailTextLabel.text=@"256–1024 PNG 阶梯样本已在 Mac 准备；此页不会把手机缩图冒充眼镜大图能力。";
+ if(p.row==5)c.detailTextLabel.text=@"The 256–1024 PNG ladder sample has been prepared for Mac; this page does not pass off mobile phone thumbnails for glasses large image capabilities.";
  return c;
 }
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)p{
  [t deselectRowAtIndexPath:p animated:YES];if(self.loading)return;
  if(p.row==0){PHPickerConfiguration *config=[[PHPickerConfiguration alloc]init];config.selectionLimit=1;config.filter=PHPickerFilter.imagesFilter;PHPickerViewController *picker=[[PHPickerViewController alloc]initWithConfiguration:config];picker.delegate=self;[self presentViewController:picker animated:YES completion:nil];}
  if(p.row==1){UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc]initForOpeningContentTypes:@[UTTypePNG,UTTypeJPEG] asCopy:YES];picker.delegate=self;[self presentViewController:picker animated:YES completion:nil];}
- if(p.row==3&&self.pixels){BOOL ok=[self.client sendLuminance:self.pixels at:NSProcessInfo.processInfo.systemUptime];self.note=ok?@"已提交本图，等待文件与 AP 独立回执；没有回执不会显示成功":@"未发送：未验证接收模块、会话不可用或已有任务。";[t reloadData];}
+ if(p.row==3&&self.pixels){BOOL ok=[self.client sendLuminance:self.pixels at:NSProcessInfo.processInfo.systemUptime];self.note=ok?@"This picture has been submitted and is waiting for the independent receipt of the file and AP; if there is no receipt, it will not show success.":@"Not Sent: The receiving module is not verified, the session is unavailable, or there is already a task.";[t reloadData];}
 }
 - (void)accept:(NSURL *)url generation:(NSUInteger)generation{
  // Called on the provider/background queue while the temporary URL is valid.
@@ -112,7 +112,7 @@ static NSData *Luminance(NSURL *url){
    CGImageRef im=CGImageCreate(TIO_W,TIO_H,8,8,TIO_W,color,(CGBitmapInfo)kCGImageAlphaNone,provider,NULL,false,kCGRenderingIntentDefault);
    if(im){self.preview=[UIImage imageWithCGImage:im];CGImageRelease(im);}CGDataProviderRelease(provider);CGColorSpaceRelease(color);
   }
-  self.note=pixels?@"已在手机生成像素，无云上传；等待接收模块验收。":@"选图失败：只支持单帧 PNG/JPEG，最多 16MP、20 MiB。";
+  self.note=pixels?@"Pixels have been generated on the mobile phone and uploaded without cloud; waiting for acceptance by the receiving module.":@"Image selection failed: Only single frame PNG/JPEG is supported, up to 16MP, 20 MiB.";
   [self.tableView reloadData];
  });
 }
@@ -131,11 +131,11 @@ UIViewController *TIOImageUploadController(TIOImageUpload *client){TIOImageUploa
 #if TIO_IMAGE_RX_LAB
 UIViewController *TIOImageUploadLabController(void){
  TIOImageUploadPage *p=(id)TIOImageUploadController(LabClient);[p loadViewIfNeeded];
- p.note=@"R4 单张传图验收：先选图，再打开眼镜 Turbo Image RX，点右上角输入 SID。原厂/R3 不支持；没有自动显示 ACK，最终看镜片 #1 和图片。";
+ p.note=@"R4 Image Transfer: select image, open Turbo Image RX on glasses, tap top right to enter SID.";
 #if TIO_IMAGE_RX_WIDE
- p.title=@"N8W · 传图 FIX 01";
- p.note=@"N8W 大区域版：眼镜页面540×180，图片512×128、64KiB。先选图，再滚动到眼镜第八项 Turbo Image RX，按下进入后输入 SID。仅匹配 N8W 协议v2；最终看镜片 #1 和图片。";
+ p.title=@"N8W · Image Transfer FIX 01";
+ p.note=@"N8W Wide Area: glasses canvas 540x180, image 512x128. Select image, open item 8 Turbo Image RX, enter SID. Finally look at lens #1 and the picture.";
 #endif
- p.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc]initWithTitle:@"输入 SID" style:UIBarButtonItemStylePlain target:p action:@selector(armManualSession)];return p;
+ p.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc]initWithTitle:@"Enter SID" style:UIBarButtonItemStylePlain target:p action:@selector(armManualSession)];return p;
 }
 #endif

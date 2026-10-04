@@ -76,7 +76,7 @@ if [[ ${TIO_CLASSIC_BINDINGS:-1} == 1 ]]; then
 fi
 xcrun --sdk iphoneos clang -arch arm64 -isysroot "$sdk_path" -miphoneos-version-min=16.0 \
   -fobjc-arc -fmodules -dynamiclib -Wall -Wextra -Wno-unused-parameter -Wno-incompatible-pointer-types \
-  -framework Foundation -framework UIKit -framework Security -framework UniformTypeIdentifiers -framework CoreLocation -framework AVFAudio \
+  -framework Foundation -framework UIKit -framework Security -framework UniformTypeIdentifiers -framework CoreLocation -framework AVFAudio -framework MapKit \
   ${nav_options[@]+"${nav_options[@]}"} \
   ${ota_options[@]+"${ota_options[@]}"} ${ota_sources[@]+"${ota_sources[@]}"} \
   ${native_options[@]+"${native_options[@]}"} ${native_sources[@]+"${native_sources[@]}"} \

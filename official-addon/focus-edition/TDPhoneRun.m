@@ -9,7 +9,7 @@
  dispatch_queue_t _writer;NSDictionary *_pending;BOOL _writing;NSString *_saveStatus;
 }
 - (instancetype)initWithStore:(TDPhoneStore *)store root:(NSURL *)root clock:(NSTimeInterval(^)(void))clock sendStart:(BOOL(^)(uint32_t,uint32_t))start sendStop:(void(^)(void))stop{
- if((self=[super init])){_store=store;_root=root;_clock=[clock copy];_start=[start copy];_stop=[stop copy];_events=[NSMutableArray new];_writer=dispatch_queue_create("io.turboio.diagnostics.archive",DISPATCH_QUEUE_SERIAL);_saveStatus=@"尚未采集";}return self;
+ if((self=[super init])){_store=store;_root=root;_clock=[clock copy];_start=[start copy];_stop=[stop copy];_events=[NSMutableArray new];_writer=dispatch_queue_create("io.turboio.diagnostics.archive",DISPATCH_QUEUE_SERIAL);_saveStatus=@"Not collected yet";}return self;
 }
 - (TDPhoneStore *)store{return _store;}
 - (BOOL)active{return _active;}
@@ -17,9 +17,9 @@
 - (NSString *)saveStatus{@synchronized(self){return _saveStatus;}}
 - (NSTimeInterval)remaining{return _active?MAX(0,_deadline-_clock()):0;}
 - (NSString *)status{
- if(_active)return !_received?@"等待眼镜首条采样":(_clock()-_lastReceipt>5?@"采样暂时中断 · 原因未知":@"正在采集 · 可返回使用其他功能");
- NSDictionary *names=@{@"user_stop":@"已手动结束",@"lease_elapsed":@"10 分钟到期 · 本轮结束",@"first_sample_timeout":@"10 秒未收到首条采样",@"telemetry_silent":@"20 秒无新采样 · 原因未知，已结束",@"submit_failed":@"采集请求提交失败",@"transfer_failed":@"诊断文件传输失败",@"probe_slow":@"眼镜因采样耗时超标停止",@"peer_context_changed":@"设备上下文改变 · 已结束",@"archive_unavailable":@"无法创建本机报告 · 未开始"};
- return names[_reason]?:@"未开始";
+ if(_active)return !_received?@"Waiting for the first sample of glasses":(_clock()-_lastReceipt>5?@"Sampling temporarily interrupted · Unknown reason":@"Collecting · Can return to use other functions");
+ NSDictionary *names=@{@"user_stop":@"Ended manually",@"lease_elapsed":@"Expires in 10 minutes · End of this round",@"first_sample_timeout":@"The first sample was not received for 10 seconds.",@"telemetry_silent":@"No new samples for 20 seconds · Unknown reason, ended",@"submit_failed":@"Collection request submission failed",@"transfer_failed":@"Diagnostic file transfer failure",@"probe_slow":@"Glasses stopped due to excessive sampling time",@"peer_context_changed":@"Device context change·Ended",@"archive_unavailable":@"Unable to create native report · Not started"};
+ return names[_reason]?:@"Not started";
 }
 static BOOL Directory(NSURL *url){struct stat s;return url.isFileURL&&lstat(url.path.fileSystemRepresentation,&s)==0&&S_ISDIR(s.st_mode);}
 - (BOOL)start{
@@ -71,16 +71,16 @@ static BOOL Directory(NSURL *url){struct stat s;return url.isFileURL&&lstat(url.
  r[@"phone_build"]=@"DIAGNOSTICS-PHONE-02";r[@"run_id"]=_runID?:@"";r[@"process_id"]=@(NSProcessInfo.processInfo.processIdentifier);
  r[@"requested_seconds"]=@600;r[@"active"]=@(_active);r[@"stop_reason"]=_reason?:NSNull.null;r[@"revision"]=@(_revision);
  r[@"updated_wall_time_s"]=@(NSDate.date.timeIntervalSince1970);r[@"events"]=[_events copy];r[@"events_dropped"]=@(_droppedEvents);
- r[@"evidence_note"]=@"操作事件来自已校验的协议回执，不等于镜片视觉确认；采样静默不能确认为蓝牙断开。关闭/崩溃后最后存盘状态可能为 active，不能视为仍在运行。";
+ r[@"evidence_note"]=@"The operation event comes from the verified protocol receipt and is not equal to the visual confirmation of the lens; sampling silence cannot be confirmed as Bluetooth disconnection. The last save status after shutdown/crash may be active and cannot be considered to be still running.";
  return [NSJSONSerialization dataWithJSONObject:r options:NSJSONWritingPrettyPrinted|NSJSONWritingSortedKeys error:nil];
 }
 - (NSString *)reportMarkdown{
- return [NSString stringWithFormat:@"%@\n## 自动记录\n\n运行：%@；手机版：DIAGNOSTICS-PHONE-02；进程：%d；快照版本：%lu。\n\n状态：%@；停止原因：%@；事件：%lu；事件淘汰：%lu。\n\n完整时间线见 JSON。协议回执不等于镜片视觉确认；采样静默的原因可能未知。报告不是崩溃转储。\n",[_store reportMarkdown],_runID?:@"未开始",NSProcessInfo.processInfo.processIdentifier,(unsigned long)_revision,self.status,_reason?:@"尚未停止",(unsigned long)_events.count,(unsigned long)_droppedEvents];
+ return [NSString stringWithFormat:@"%@\n## Automatically record \n\n running: %@; mobile version: DIAGNOSTICS-PHONE-02; process: %d; snapshot version: %lu. \n\n status: %@; stop reason: %@; event: %lu; event elimination: %lu. \n\n Full timeline in JSON. Agreement receipt does not equal visual confirmation of the lens; the reason for sampling silence may be unknown. The report is not a crash dump. \n",[_store reportMarkdown],_runID?:@"Not started",NSProcessInfo.processInfo.processIdentifier,(unsigned long)_revision,self.status,_reason?:@"not stopped yet",(unsigned long)_events.count,(unsigned long)_droppedEvents];
 }
 - (void)checkpoint{
  NSAssert(NSThread.isMainThread,@"main only");if(!_reportDirectory)return;_lastSave=_clock();_revision++;
  NSData *json=[self reportJSON],*md=[[self reportMarkdown]dataUsingEncoding:NSUTF8StringEncoding];
- if(!json||json.length>4*1024*1024||md.length>1024*1024){@synchronized(self){_saveStatus=@"报告超限 · 保存失败";}return;}
+ if(!json||json.length>4*1024*1024||md.length>1024*1024){@synchronized(self){_saveStatus=@"Report limit exceeded·Save failed";}return;}
  NSDictionary *job=@{@"dir":_reportDirectory,@"json":json,@"md":md};
  // Ordered jobs are bounded by the ten-minute 5s cadence; coalesce only the same run.
  @synchronized(self){
@@ -94,7 +94,7 @@ static BOOL Directory(NSURL *url){struct stat s;return url.isFileURL&&lstat(url.
  for(NSString *name in @[@"json",@"md"]){if(!ok)break;NSURL *url=[dir URLByAppendingPathComponent:[@"diagnostics."stringByAppendingString:name]];
   ok=[job[name]writeToURL:url options:NSDataWritingAtomic|NSDataWritingFileProtectionCompleteUntilFirstUserAuthentication error:nil];
   if(ok)ok=[fm setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:url.path error:nil];}
- @synchronized(self){_saveStatus=ok?@"报告已自动保存到本机":@"自动保存失败 · 可手动分享";}
+ @synchronized(self){_saveStatus=ok?@"The report has been automatically saved to this computer":@"Auto-save failed·Can be shared manually";}
  }
 }
 - (void)waitForWrites{dispatch_sync(_writer,^{});}

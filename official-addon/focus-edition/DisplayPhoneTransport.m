@@ -33,6 +33,12 @@ static BOOL Valid(NSData *d){
  NSFileManager *fm=NSFileManager.defaultManager;NSError *err=nil;
  if(![fm createDirectoryAtURL:_root withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:&err]){done(NO,nil);return;}
  NSDictionary *attr=[fm attributesOfItemAtPath:_root.path error:&err];NSArray *items=[fm contentsOfDirectoryAtURL:_root includingPropertiesForKeys:nil options:0 error:&err];
+ if(items&&items.count>=64){
+  for(NSURL *u in items){
+   if(![u.lastPathComponent isEqual:task])[fm removeItemAtURL:u error:nil];
+  }
+  items=[fm contentsOfDirectoryAtURL:_root includingPropertiesForKeys:nil options:0 error:&err];
+ }
  if(err||![attr[NSFileType] isEqual:NSFileTypeDirectory]||!items||items.count>=512){done(NO,nil);return;}
  NSURL *dir=[_root URLByAppendingPathComponent:task isDirectory:YES];
  if(![fm createDirectoryAtURL:dir withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:&err]){done(NO,nil);return;}

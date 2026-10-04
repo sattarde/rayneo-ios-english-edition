@@ -29,7 +29,7 @@ static void Run(NSString *name){
     Scenario=name;ModelRequests=0;SearchRequests=0;__block BOOL done=NO,cancelled=NO;__block NSUInteger finals=0;__block NSString *last=@"",*error=nil;
     FakeWebRequest *r=[FakeWebRequest new];__weak FakeWebRequest *weak=r;
     r.newsMode=[name hasPrefix:@"news"];
-    r.update=^(NSString *text,BOOL final,NSString *e){assert(!last.length||[text hasPrefix:last]);last=text;if(final){finals++;done=YES;error=e;}if([name isEqual:@"cancel"]&&[text containsString:@"正在联网"]){[weak cancel];cancelled=YES;done=YES;}};
+    r.update=^(NSString *text,BOOL final,NSString *e){assert(!last.length||[text hasPrefix:last]);last=text;if(final){finals++;done=YES;error=e;}if([name isEqual:@"cancel"]&&([text containsString:@"正在联网"]||[text containsString:@"Searching the web"])){[weak cancel];cancelled=YES;done=YES;}};
     [r startEndpoint:[NSURL URLWithString:@"https://model.example/chat/completions"] key:@"synthetic-model-key" payload:TIOChatRequest(@"test",@"public query") searchKey:@"synthetic-search-key"];
     NSDate *start=NSDate.date;while(!done&&-[start timeIntervalSinceNow]<3)[NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
     assert(done);if([name isEqual:@"cancel"]){assert(cancelled&&finals==0&&SearchRequests==0);return;}

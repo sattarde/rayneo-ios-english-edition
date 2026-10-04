@@ -33,16 +33,16 @@ NSArray *TIOTodoOutbox(NSData *data){
 - (void)fetchEndpoint:(NSURL *)endpoint token:(NSString *)token completion:(void (^)(NSArray<NSDictionary *> * _Nullable,NSString * _Nullable))completion{
     [self cancel];_completion=completion;
     NSCharacterSet *chars=[NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"];
-    if(!TIOTodoPhoneEndpoint(endpoint.absoluteString)||token.length<32||token.length>128||[token rangeOfCharacterFromSet:chars.invertedSet].location!=NSNotFound){[self finish:nil error:@"需要有效的HTTPS待办入口和独立配对令牌。"];return;}
+    if(!TIOTodoPhoneEndpoint(endpoint.absoluteString)||token.length<32||token.length>128||[token rangeOfCharacterFromSet:chars.invertedSet].location!=NSNotFound){[self finish:nil error:@"Requires a valid HTTPS todo entry and a standalone pairing token."];return;}
     NSMutableURLRequest *r=[NSMutableURLRequest requestWithURL:[endpoint URLByAppendingPathComponent:@"outbox"]];r.timeoutInterval=12;[r setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];[r setValue:@"application/json" forHTTPHeaderField:@"Accept"];
     NSURLSessionConfiguration *c=NSURLSessionConfiguration.ephemeralSessionConfiguration;c.HTTPCookieStorage=nil;c.URLCredentialStorage=nil;c.URLCache=nil;c.timeoutIntervalForResource=15;
     _buffer=[NSMutableData new];_session=[NSURLSession sessionWithConfiguration:c delegate:self delegateQueue:NSOperationQueue.mainQueue];_task=[_session dataTaskWithRequest:r];[_task resume];
 }
-- (void)URLSession:(NSURLSession *)s task:(NSURLSessionTask *)t willPerformHTTPRedirection:(NSHTTPURLResponse *)r newRequest:(NSURLRequest *)req completionHandler:(void (^)(NSURLRequest *))handler{handler(nil);if(t==_task)[self finish:nil error:@"待办入口重定向，已拒绝转发令牌。"];}
+- (void)URLSession:(NSURLSession *)s task:(NSURLSessionTask *)t willPerformHTTPRedirection:(NSHTTPURLResponse *)r newRequest:(NSURLRequest *)req completionHandler:(void (^)(NSURLRequest *))handler{handler(nil);if(t==_task)[self finish:nil error:@"Pending ingress redirect, forwarding token refused."];}
 - (void)URLSession:(NSURLSession *)s dataTask:(NSURLSessionDataTask *)t didReceiveResponse:(NSURLResponse *)r completionHandler:(void (^)(NSURLSessionResponseDisposition))handler{
     if(t!=_task){handler(NSURLSessionResponseCancel);return;}NSInteger code=[r isKindOfClass:NSHTTPURLResponse.class]?[(NSHTTPURLResponse *)r statusCode]:0;
-    if(code!=200||![r.MIMEType.lowercaseString isEqual:@"application/json"]){handler(NSURLSessionResponseCancel);[self finish:nil error:[NSString stringWithFormat:@"待办入口未就绪（HTTP %ld），没有提交或修改待办。",(long)code]];}else handler(NSURLSessionResponseAllow);
+    if(code!=200||![r.MIMEType.lowercaseString isEqual:@"application/json"]){handler(NSURLSessionResponseCancel);[self finish:nil error:[NSString stringWithFormat:@"The to-do entry is not ready (HTTP %ld), and the to-do is not submitted or modified.",(long)code]];}else handler(NSURLSessionResponseAllow);
 }
-- (void)URLSession:(NSURLSession *)s dataTask:(NSURLSessionDataTask *)t didReceiveData:(NSData *)data{if(t!=_task)return;if(_buffer.length+data.length>1024*1024){[self finish:nil error:@"待办响应超出限制。"];return;}[_buffer appendData:data];}
-- (void)URLSession:(NSURLSession *)s task:(NSURLSessionTask *)t didCompleteWithError:(NSError *)error{if(t!=_task)return;if(error){[self finish:nil error:@"待办网络连接失败或超时。"];return;}NSArray *items=TIOTodoOutbox(_buffer);[self finish:items error:items?nil:@"待办协议或数据校验失败，未修改任何任务。"];}
+- (void)URLSession:(NSURLSession *)s dataTask:(NSURLSessionDataTask *)t didReceiveData:(NSData *)data{if(t!=_task)return;if(_buffer.length+data.length>1024*1024){[self finish:nil error:@"Pending response exceeds limit."];return;}[_buffer appendData:data];}
+- (void)URLSession:(NSURLSession *)s task:(NSURLSessionTask *)t didCompleteWithError:(NSError *)error{if(t!=_task)return;if(error){[self finish:nil error:@"Pending network connection failed or timed out."];return;}NSArray *items=TIOTodoOutbox(_buffer);[self finish:items error:items?nil:@"The pending protocol or data verification failed and no tasks were modified."];}
 @end

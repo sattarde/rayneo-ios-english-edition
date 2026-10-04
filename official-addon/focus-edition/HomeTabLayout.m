@@ -1,12 +1,12 @@
 #import "HomeTabLayout.h"
 #include <math.h>
 static NSArray<NSArray<NSString *> *> *TabNamesBySlot(void){
-    return @[@[@"RayNeo"],@[@"眼镜"],@[@"记忆",@"回忆"],@[@"发现",@"探索"]];
+    return @[@[@"RayNeo"],@[@"Glasses"],@[@"memory",@"remember"],@[@"Discover",@"explore"]];
 }
 NSString *TIOHomeTabName(NSString *label){
     if(![label isKindOfClass:NSString.class]||label.length>100)return nil;
     NSString *s=[label stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    for(NSString *name in @[@"RayNeo",@"眼镜",@"记忆",@"发现",@"回忆",@"探索"]){
+    for(NSString *name in @[@"RayNeo",@"Glasses",@"memory",@"Discover",@"remember",@"explore"]){
         if([s isEqual:name])return name;
         for(NSString *separator in @[@"\n",@",",@"，"]){if([s hasPrefix:[name stringByAppendingString:separator]])return name;}
     }return nil;
@@ -39,8 +39,8 @@ NSDictionary *TIOHomeTabLayout(NSArray<NSDictionary *> *nodes,double w,double h,
     NSArray *names=[sorted valueForKey:@"name"];
     // Only the two observed complete official layouts, not arbitrary aliases
     // mixed across pages. Retain the actual label for the native button title.
-    if(![names isEqual:@[@"RayNeo",@"眼镜",@"记忆",@"发现"]]&&
-       ![names isEqual:@[@"RayNeo",@"眼镜",@"回忆",@"探索"]])return nil;
+    if(![names isEqual:@[@"RayNeo",@"Glasses",@"memory",@"Discover"]]&&
+       ![names isEqual:@[@"RayNeo",@"Glasses",@"remember",@"explore"]])return nil;
     double previous=-1,minY=INFINITY,maxY=-INFINITY;
     for(NSUInteger i=0;i<4;i++){
         NSDictionary *n=sorted[i];double x=[n[@"x"] doubleValue],y=[n[@"y"] doubleValue],nw=[n[@"width"] doubleValue],nh=[n[@"height"] doubleValue];

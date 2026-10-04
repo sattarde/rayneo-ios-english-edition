@@ -17,6 +17,7 @@ typedef void(^TDPSend)(NSData *,NSString *,TDPSubmitted);
 @property(nonatomic,readonly) NSTimeInterval frameElapsed;
 @property(nonatomic,readonly) BOOL deltaActive;
 @property(nonatomic,readonly) BOOL hasPixelBaseline;
+@property(nonatomic,readonly,nullable) NSData *knownPixels;
 @property(nonatomic,readonly) NSUInteger deltaTotal,completedRects;
 @property(nonatomic,readonly) NSTimeInterval deltaElapsed;
 - (instancetype)initWithDevice:(NSString *)device clock:(NSTimeInterval(^)(void))clock sender:(TDPSend)sender;

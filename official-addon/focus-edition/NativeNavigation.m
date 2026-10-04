@@ -47,28 +47,28 @@ BOOL TNVScene(NSDictionary *d,BOOL always,TNScene *s){
  NSData *_packet,*_latest,*_committed,*_sending;NSMutableArray *_early;BOOL _active,_fileBusy,_ack,_submitted,_failed,_stopping,_always;
  NSTimeInterval _deadline,_lastOffer,_lastCommit,_lastWire,_next;NSUInteger _count;unsigned _op;
 }
-- (instancetype)initWithDevice:(NSString *)device session:(uint32_t)sid clock:(NSTimeInterval(^)(void))clock sender:(void(^)(NSData *,NSString *,TNVSubmitted))sender cleanup:(void(^)(NSString *))cleanup{if(!device.length||!sid||!clock||!sender)return nil;if((self=[super init])){_device=[device copy];_sid=sid;_clock=[clock copy];_sender=[sender copy];_cleanup=[cleanup copy];_note=@"尚未开始";}return self;}
+- (instancetype)initWithDevice:(NSString *)device session:(uint32_t)sid clock:(NSTimeInterval(^)(void))clock sender:(void(^)(NSData *,NSString *,TNVSubmitted))sender cleanup:(void(^)(NSString *))cleanup{if(!device.length||!sid||!clock||!sender)return nil;if((self=[super init])){_device=[device copy];_sid=sid;_clock=[clock copy];_sender=[sender copy];_cleanup=[cleanup copy];_note=@"Not started yet";}return self;}
 - (BOOL)active{return _active;}- (BOOL)busy{return _packet||_fileBusy;}
 - (NSDictionary *)status{return @{@"active":@(_active),@"busy":@(self.busy),@"note":_note?:@"",@"snapshots":@(_count),@"session":@(_sid),@"sequence":@(_seq),@"always":@(_always),@"failed":@(_failed)};}
 - (void)fail:(NSString *)note{_active=NO;_failed=YES;_packet=nil;_note=note;/* preserve uncertain native file ownership */}
 - (void)finish{if(!_packet||!_ack||_fileBusy||!_submitted)return;unsigned op=_op;_packet=nil;_nativeTask=nil;_early=nil;if(_cleanup)_cleanup(_task);_task=nil;_next=_clock()+1;
  if(op==TN_START||op==TN_UPDATE){_committed=_sending;_lastCommit=_clock();_count++;}_sending=nil;
- if(op==TN_STOP){_active=NO;_stopping=NO;_note=@"眼镜已确认退出导航";}else _note=@"原生导航已提交 · 镜片效果待确认";
+ if(op==TN_STOP){_active=NO;_stopping=NO;_note=@"Glasses confirmed navigation exit";}else _note=@"Native navigation submitted · Verify on glasses";
 }
 - (BOOL)send:(enum TNOp)op scene:(NSData *)scene{
  if(self.busy||_failed||_seq==UINT32_MAX)return NO;uint8_t b[512];size_t n=tn_encode(b,sizeof b,op,_sid,++_seq,scene?(const TNScene *)scene.bytes:NULL);if(!n)return NO;
  _packet=[NSData dataWithBytes:b length:n];_task=NSUUID.UUID.UUIDString;_nativeTask=nil;_early=[NSMutableArray new];_ack=_submitted=NO;_fileBusy=YES;_op=op;_sending=scene;_lastWire=_clock();_deadline=_lastWire+8;NSString *task=_task;
  __weak typeof(self) weak=self;_sender(_packet,task,^(BOOL ok,NSString *native){TNVSession *s=weak;if(!s||![task isEqual:s->_task])return;
-  if(!ok||![native isKindOfClass:NSString.class]||!native.length||native.length>256){s->_fileBusy=NO;[s fail:@"文件提交失败；停止导航发送"];return;}
+  if(!ok||![native isKindOfClass:NSString.class]||!native.length||native.length>256){s->_fileBusy=NO;[s fail:@"File submission failed; stop navigation sending"];return;}
   s->_submitted=YES;s->_nativeTask=[native copy];NSArray *early=[s->_early copy];s->_early=nil;for(NSDictionary *e in early)[s consume:e];[s finish];});return YES;
 }
-- (BOOL)start:(NSDictionary *)frame always:(BOOL)always{if(_seq||_active||self.busy||_failed)return NO;TNScene s;if(!TNVScene(frame,always,&s))return NO;_always=always;_latest=[NSData dataWithBytes:&s length:sizeof s];_lastOffer=_clock();_active=YES;_note=@"正在请求自动打开原生导航";if(![self send:TN_START scene:_latest]){_active=NO;return NO;}return YES;}
+- (BOOL)start:(NSDictionary *)frame always:(BOOL)always{if(_seq||_active||self.busy||_failed)return NO;TNScene s;if(!TNVScene(frame,always,&s))return NO;_always=always;_latest=[NSData dataWithBytes:&s length:sizeof s];_lastOffer=_clock();_active=YES;_note=@"Requesting to automatically open native navigation";if(![self send:TN_START scene:_latest]){_active=NO;return NO;}return YES;}
 - (void)offer:(NSDictionary *)frame{if(!_active||_stopping)return;TNScene s;if(!TNVScene(frame,_always,&s)){[self stop];return;}_latest=[NSData dataWithBytes:&s length:sizeof s];_lastOffer=_clock();}
 - (void)setAlways:(BOOL)always{_always=always;if(_latest){NSMutableData *d=[_latest mutableCopy];((TNScene *)d.mutableBytes)->mode=always?TN_ALWAYS:TN_SMART;_latest=d;}}
-- (void)stop{if(!_active)return;_stopping=YES;_note=@"等待在途包结束后退出导航";[self pump];}
-- (void)disconnect{[self fail:@"连接中断；已停止。眼镜按60秒策略退出常亮，请查看手机。"];}
+- (void)stop{if(!_active)return;_stopping=YES;_note=@"Waiting for pending packets before exit";[self pump];}
+- (void)disconnect{[self fail:@"Connection interrupted; stopped. The glasses exit from constant light according to the 60-second policy, please check your phone."];}
 - (void)pump{
- if(_packet&&_clock()>=_deadline){[self fail:@"导航协议超时；停止发送，请确认已刷TNV1固件并用实体键退出旧画面。"];return;}
+ if(_packet&&_clock()>=_deadline){[self fail:@"The navigation protocol has timed out; stops sending. Please confirm that you have flashed the TNV1 firmware and use the physical key to exit the old screen."];return;}
  if(!_active||self.busy||_clock()<_next)return;
  if(_stopping){[self send:TN_STOP scene:nil];return;}
  if(_clock()-_lastOffer<=15&&(![_latest isEqual:_committed]||_clock()-_lastCommit>=10)){[self send:TN_UPDATE scene:_latest];return;}
@@ -82,12 +82,12 @@ BOOL TNVScene(NSDictionary *d,BOOL always,TNScene *s){
   if([type isEqual:@"fileShareSuccess"]&&![e[@"fileName"] isEqual:@"turbo-navigation.tnv"])return NO;
   if(!_nativeTask&&_fileBusy){if(_early.count<8)[_early addObject:[e copy]];return NO;}
   if(![tid isEqual:_nativeTask])return NO;_fileBusy=NO;
-  if([type isEqual:@"fileShareFailed"])[self fail:@"导航文件传输失败，未继续发送"];else [self finish];return YES;
+  if([type isEqual:@"fileShareFailed"])[self fail:@"Navigation file transfer failed and did not continue to be sent."];else [self finish];return YES;
  }
  TNReply q;if(!TNVDecodeReply(e,&q))return NO;if(![e[@"message"][@"deviceId"] isEqual:_device])return NO;
  if(!_packet||q.sid!=_sid||q.sequence!=_seq)return YES;
- if(_clock()>=_deadline){[self fail:@"收到迟到回执，未恢复发送"];return YES;}
- if(q.result!=TN_OK||(_op!=TN_STOP&&!q.active)){[self fail:[NSString stringWithFormat:@"眼镜拒绝导航（%u）；先退出其他任务后重新开启",q.result]];return YES;}
+ if(_clock()>=_deadline){[self fail:@"Late receipt received, sending not resumed"];return YES;}
+ if(q.result!=TN_OK||(_op!=TN_STOP&&!q.active)){[self fail:[NSString stringWithFormat:@"Glasses refuse to navigate (%u); exit other tasks first and then reopen",q.result]];return YES;}
  _ack=YES;[self finish];return YES;
 }
 @end

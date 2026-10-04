@@ -20,16 +20,16 @@ static BOOL IsExportRow(id self,UITableView *table,NSIndexPath *ip){
 static id Cell(id self,SEL cmd,UITableView *table,NSIndexPath *ip){
     if(!IsExportRow(self,table,ip))return PriorCell(self,cmd,table,ip);
     UITableViewCell *cell=[[UITableViewCell alloc]initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-    cell.textLabel.text=@"录音与文本分享";
-    cell.detailTextLabel.text=@"音频 AirDrop / 存储到文件 · TXT/MD 导入分享";
+    cell.textLabel.text=@"Recordings & Text Sharing";
+    cell.detailTextLabel.text=@"Audio AirDrop/Save to File · TXT/MD Import Share";
     cell.detailTextLabel.numberOfLines=0;
     cell.imageView.image=[UIImage systemImageNamed:@"square.and.arrow.up"];
     cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     return cell;
 }
-static id Header(id self,SEL cmd,id table,NSInteger section){return section==1?@"录音与文本导出":PriorHeader(self,cmd,table,section);}
+static id Header(id self,SEL cmd,id table,NSInteger section){return section==1?@"Audio recording and text export":PriorHeader(self,cmd,table,section);}
 static id Footer(id self,SEL cmd,id table,NSInteger section){
-    if(section==1)return @"旁路文字只含开启后收到的全天智记。音频分享使用官方已准备的本机文件，不删原件。当前录音全文的自动 Markdown 导出尚未接通。";
+    if(section==1)return @"The bypass text only contains all-day wisdom notes received after opening. Audio sharing uses officially prepared local files and does not delete the original files. Automatic Markdown export of the full text of the current recording has not yet been enabled.";
     return PriorFooter(self,cmd,table,section);
 }
 static void Select(id self,SEL cmd,UITableView *table,NSIndexPath *ip){

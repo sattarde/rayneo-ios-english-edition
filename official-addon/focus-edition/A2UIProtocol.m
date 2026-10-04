@@ -21,14 +21,14 @@ NSDictionary *TIOA2UIInstall(NSString *identifier,BOOL layout){
     if(!ID(identifier))return nil;
     NSArray *components=layout?@[
         @{@"id":@"root",@"component":@"Column",@"children":@[@"title",@"line",@"content"],@"align":@"stretch"},
-        @{@"id":@"title",@"component":@"Text",@"text":@"Turbo IO 自定义布局 8642",@"variant":@"h3"},
+        @{@"id":@"title",@"component":@"Text",@"text":@"Turbo IO custom layout 8642",@"variant":@"h3"},
         @{@"id":@"line",@"component":@"Divider",@"axis":@"horizontal"},
         @{@"id":@"content",@"component":@"Row",@"children":@[@"icon",@"body"],@"align":@"center"},
         @{@"id":@"icon",@"component":@"Icon",@"name":@"sunny"},
-        @{@"id":@"body",@"component":@"Text",@"text":@"图标 + 横排文字\n第二行校验 8642",@"variant":@"body"}]:@[@{@"id":@"root",@"component":@"Text",@"text":@"Turbo IO 自定义 UI 7392",@"variant":@"body"}];
-    NSDictionary *extra=@{@"widgetId":identifier,@"name":@"Turbo IO UI 测试",@"uiContent":@{@"createSurface":@{@"surfaceId":identifier,@"catalogId":@"https://rayneo.com/a2ui/catalogs/glasses-base/v1/catalog.json"},@"updateComponents":@{@"surfaceId":identifier,@"components":components}}};
+        @{@"id":@"body",@"component":@"Text",@"text":@"Icon + horizontal text \n second line verification 8642",@"variant":@"body"}]:@[@{@"id":@"root",@"component":@"Text",@"text":@"Turbo IO custom UI 7392",@"variant":@"body"}];
+    NSDictionary *extra=@{@"widgetId":identifier,@"name":@"Turbo IO UI testing",@"uiContent":@{@"createSurface":@{@"surfaceId":identifier,@"catalogId":@"https://rayneo.com/a2ui/catalogs/glasses-base/v1/catalog.json"},@"updateComponents":@{@"surfaceId":identifier,@"components":components}}};
     NSString *text=[[NSString alloc]initWithData:[NSJSONSerialization dataWithJSONObject:extra options:NSJSONWritingSortedKeys error:nil] encoding:NSUTF8StringEncoding];
-    return @{@"cmd":@"widget_install",@"payload":@{@"data":@{@"type":@"a2ui",@"id":identifier,@"name":@"Turbo IO UI 测试",@"extras":text}}};
+    return @{@"cmd":@"widget_install",@"payload":@{@"data":@{@"type":@"a2ui",@"id":identifier,@"name":@"Turbo IO UI testing",@"extras":text}}};
 }
 NSDictionary *TIOA2UIUninstall(NSString *identifier){return ID(identifier)?@{@"cmd":@"widget_uninstall",@"payload":@{@"data":@{@"id":identifier}}}:nil;}
 
@@ -41,26 +41,26 @@ NSDictionary *TIOA2UIFixtureInstall(NSString *identifier,NSString *profile){
         BOOL bar=[profile isEqual:@"bar"];
         components=@[
             @{@"id":@"root",@"component":@"Column",@"children":@[@"title",@"chart"],@"align":@"stretch"},
-            @{@"id":@"title",@"component":@"Text",@"text":bar?@"柱状图 6111":@"折线图 6222",@"variant":@"caption"},
+            @{@"id":@"title",@"component":@"Text",@"text":bar?@"Bar chart 6111":@"Line chart 6222",@"variant":@"caption"},
             @{@"id":@"chart",@"component":bar?@"BarChart":@"LineChart",@"weight":@1,
               @"data":@[@{@"label":@"A",@"value":@25},@{@"label":@"B",@"value":@60},@{@"label":@"C",@"value":@90}],
               @"yAxis":@{@"baseValue":@0,@"min":@0,@"max":@100},@"orientation":@"vertical",@"showZeroBaseline":@"line"}];
     }else if([profile isEqual:@"card"]){
         // Test Card separately from List to isolate rejection/layout failures.
         components=@[@{@"id":@"root",@"component":@"Card",@"child":@"body"},
-                     @{@"id":@"body",@"component":@"Text",@"text":@"容器卡 6333\n第二行完整显示",@"variant":@"body"}];
+                     @{@"id":@"body",@"component":@"Text",@"text":@"The second line of container card 6333\n is displayed in full",@"variant":@"body"}];
     }else{
         // Three short lines first; do not assume List routes wheel events.
         components=@[@{@"id":@"root",@"component":@"List",@"direction":@"vertical",@"children":@[@"first",@"second",@"last"]},
-                     @{@"id":@"first",@"component":@"Text",@"text":@"列表 6444 · 第一行",@"variant":@"body"},
-                     @{@"id":@"second",@"component":@"Text",@"text":@"第二行 · 仅显示测试",@"variant":@"body"},
-                     @{@"id":@"last",@"component":@"Text",@"text":@"第三行 · 结束 6444",@"variant":@"body"}];
+                     @{@"id":@"first",@"component":@"Text",@"text":@"Listing 6444 · First row",@"variant":@"body"},
+                     @{@"id":@"second",@"component":@"Text",@"text":@"Second row · Show only tests",@"variant":@"body"},
+                     @{@"id":@"last",@"component":@"Text",@"text":@"Line 3 · End 6444",@"variant":@"body"}];
     }
-    NSDictionary *extra=@{@"widgetId":identifier,@"name":@"Turbo IO UI 测试",@"uiContent":@{
+    NSDictionary *extra=@{@"widgetId":identifier,@"name":@"Turbo IO UI testing",@"uiContent":@{
         @"createSurface":@{@"surfaceId":identifier,@"catalogId":@"https://rayneo.com/a2ui/catalogs/glasses-base/v1/catalog.json"},
         @"updateComponents":@{@"surfaceId":identifier,@"components":components}}};
     NSData *json=[NSJSONSerialization dataWithJSONObject:extra options:NSJSONWritingSortedKeys error:nil];
-    return @{@"cmd":@"widget_install",@"payload":@{@"data":@{@"type":@"a2ui",@"id":identifier,@"name":@"Turbo IO UI 测试",@"extras":[[NSString alloc]initWithData:json encoding:NSUTF8StringEncoding]}}};
+    return @{@"cmd":@"widget_install",@"payload":@{@"data":@{@"type":@"a2ui",@"id":identifier,@"name":@"Turbo IO UI testing",@"extras":[[NSString alloc]initWithData:json encoding:NSUTF8StringEncoding]}}};
 }
 static NSDictionary *OtherWidgets(NSDictionary *snapshot,NSString *owned){
     if(![snapshot isKindOfClass:NSDictionary.class]||![snapshot[@"widgets_v2"] isKindOfClass:NSArray.class])return nil;

@@ -11,7 +11,7 @@
 static TNVSession *Session;static TNVTransport *Transport;static NSTimer *Timer;static NSString *Peer;static NSTimeInterval LastSave;
 BOOL TNVAlways(void){return [NSUserDefaults.standardUserDefaults boolForKey:@"TurboNavigationAlwaysOnV1"];}
 void TNVSetAlways(BOOL value){[NSUserDefaults.standardUserDefaults setBool:value forKey:@"TurboNavigationAlwaysOnV1"];[Session setAlways:value];}
-NSDictionary *TNVStatus(void){return Session.status?:@{@"active":@NO,@"busy":@NO,@"snapshots":@0,@"note":@"TNV1专用固件：手机开始导航后可自动打开眼镜页面"};}
+NSDictionary *TNVStatus(void){return Session.status?:@{@"active":@NO,@"busy":@NO,@"snapshots":@0,@"note":@"TNV1 special firmware: the glasses page can be automatically opened after the mobile phone starts navigation"};}
 BOOL TNVConsume(NSDictionary *e){if(Peer&&![Peer isEqual:TIOProtocolDevice()])[Session disconnect];return [Session consume:e];}
 BOOL TNVPauseForOTA(void){return !Session.active&&!Session.busy;}
 void TNVPump(void){

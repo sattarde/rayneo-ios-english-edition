@@ -24,11 +24,11 @@ void TIOStyleResearchCell(UITableViewCell *c){c.textLabel.font=[UIFont preferred
 - (void)navigationController:(UINavigationController *)n willShowViewController:(UIViewController *)v animated:(BOOL)animated{
     v.navigationItem.title=v.title;
     if([v isKindOfClass:UITableViewController.class])TIOStyleResearchTable((UITableViewController *)v);
-    v.navigationItem.backButtonTitle=@"返回";
+    v.navigationItem.backButtonTitle=@"Back";
     if(v!=n.viewControllers.firstObject)v.navigationItem.largeTitleDisplayMode=UINavigationItemLargeTitleDisplayModeNever;
     NSMutableArray *items=[v.navigationItem.rightBarButtonItems mutableCopy]?:[NSMutableArray new];
     NSIndexSet *old=[items indexesOfObjectsPassingTest:^BOOL(UIBarButtonItem *b,NSUInteger i,BOOL *stop){return b.tag==7921;}];[items removeObjectsAtIndexes:old];
-    UIBarButtonItem *close=[[UIBarButtonItem alloc]initWithTitle:@"关闭" style:UIBarButtonItemStylePlain target:self action:@selector(closeResearch)];close.tag=7921;close.accessibilityLabel=@"关闭研究，返回官方 App";[items insertObject:close atIndex:0];v.navigationItem.rightBarButtonItems=items;
+    UIBarButtonItem *close=[[UIBarButtonItem alloc]initWithTitle:@"Close" style:UIBarButtonItemStylePlain target:self action:@selector(closeResearch)];close.tag=7921;close.accessibilityLabel=@"Close HUD, return to RayNeo app";[items insertObject:close atIndex:0];v.navigationItem.rightBarButtonItems=items;
 }
 - (void)pushViewController:(UIViewController *)v animated:(BOOL)animated{
     // Detail-to-detail routes replace the current detail; back always reaches
@@ -38,7 +38,7 @@ void TIOStyleResearchCell(UITableViewCell *c){c.textLabel.font=[UIFont preferred
 @end
 UITabBarController *TIOCreateResearchTabs(NSArray<UIViewController *> *pages){
     NSCAssert(pages.count==4,@"Four research roots required");UITabBarController *tabs=[TIOResearchTabs new];tabs.modalPresentationStyle=UIModalPresentationFullScreen;tabs.view.tag=7920;tabs.view.tintColor=UIColor.systemIndigoColor;
-    NSArray *names=@[@"模型",@"新闻",@"资料",@"诊断"],*icons=@[@"square.stack.3d.up",@"newspaper",@"folder",@"waveform.path.ecg"];
+    NSArray *names=@[@"Model",@"News",@"Library",@"Diagnostics"],*icons=@[@"square.stack.3d.up",@"newspaper",@"folder",@"waveform.path.ecg"];
     NSMutableArray *navs=[NSMutableArray new];for(NSUInteger i=0;i<pages.count;i++){[pages[i] loadViewIfNeeded];TIOResearchNavigation *nav=[[TIOResearchNavigation alloc]initWithRootViewController:pages[i]];nav.tabBarItem=[[UITabBarItem alloc]initWithTitle:names[i] image:[UIImage systemImageNamed:icons[i]] tag:i];[navs addObject:nav];}tabs.viewControllers=navs;
     UITabBarAppearance *bar=[UITabBarAppearance new];[bar configureWithOpaqueBackground];bar.backgroundColor=UIColor.secondarySystemGroupedBackgroundColor;tabs.tabBar.standardAppearance=bar;tabs.tabBar.scrollEdgeAppearance=bar;return tabs;
 }

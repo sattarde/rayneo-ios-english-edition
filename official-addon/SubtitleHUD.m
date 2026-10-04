@@ -30,7 +30,7 @@ static void Save(void){
     // Private metadata only; no audio, official text, device ID, route or credentials.
     NSString *dir=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/TurboIOResearch/subtitle-hud"];
     [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:@{NSFileProtectionKey:NSFileProtectionCompleteUntilFirstUserAuthentication} error:nil];
-    NSDictionary *d=@{@"version":@"subtitle-hud-v1.1",@"time":@(NSDate.date.timeIntervalSince1970),@"phase":Trial.phase?:@"idle",@"note":Trial.note?:@"等待官方字幕预览→退出样本",@"frame":@(Trial.frame),@"audioPackets":@(Trial.audioPackets),@"previewSample":@(Preview!=nil),@"stopSample":@(Stop!=nil),@"previewAck":@(PreviewAck),@"stopDifferentSID":@(StopDifferentSID),@"available":@(Available()),@"confirmedIdle":@(ConfirmedIdle),@"elapsed":@(Trial.began?Now()-Trial.began:0),@"events":Events?:@[]} ;
+    NSDictionary *d=@{@"version":@"subtitle-hud-v1.1",@"time":@(NSDate.date.timeIntervalSince1970),@"phase":Trial.phase?:@"idle",@"note":Trial.note?:@"Waiting for official subtitle preview → exit sample",@"frame":@(Trial.frame),@"audioPackets":@(Trial.audioPackets),@"previewSample":@(Preview!=nil),@"stopSample":@(Stop!=nil),@"previewAck":@(PreviewAck),@"stopDifferentSID":@(StopDifferentSID),@"available":@(Available()),@"confirmedIdle":@(ConfirmedIdle),@"elapsed":@(Trial.began?Now()-Trial.began:0),@"events":Events?:@[]} ;
     [[NSJSONSerialization dataWithJSONObject:d options:NSJSONWritingPrettyPrinted error:nil] writeToFile:[dir stringByAppendingPathComponent:@"diagnostic.json"] options:NSDataWritingAtomic error:nil];
     [NSNotificationCenter.defaultCenter postNotificationName:@"TIOSubtitleChanged" object:nil];
 }
@@ -43,7 +43,7 @@ static void Evidence(NSString *direction,NSDictionary *e){
 static BOOL Send(NSUInteger type,NSDictionary *j){
     if(!NSThread.isMainThread||!Plugin||!Route||!Device||Sending||![TIOProtocolDevice() isEqual:Device])return NO;
     if(type==5&&TextPending)return NO;
-    if(type!=3&&UIApplication.sharedApplication.applicationState!=UIApplicationStateActive)return NO;
+    if(type!=3&&!Trial.navigation&&UIApplication.sharedApplication.applicationState!=UIApplicationStateActive)return NO;
     Class td=NSClassFromString(@"FlutterStandardTypedData"),call=NSClassFromString(@"FlutterMethodCall");SEL typed=NSSelectorFromString(@"typedDataWithBytes:"),make=NSSelectorFromString(@"methodCallWithMethodName:arguments:"),handle=NSSelectorFromString(@"handleMethodCall:result:");
     NSData *data=TIOSubtitlePacket(type,j);if(!data||![td respondsToSelector:typed]||![call respondsToSelector:make]||![Plugin respondsToSelector:handle])return NO;
     NSMutableDictionary *args=[Route mutableCopy];args[@"businessId"]=@19;args[@"payload"]=((id(*)(id,SEL,id))objc_msgSend)(td,typed,data);
@@ -53,18 +53,21 @@ static BOOL Send(NSUInteger type,NSDictionary *j){
     @try{((void(*)(id,SEL,id,id))objc_msgSend)(Plugin,handle,c,[^(id result){
         BOOL failure=([result isKindOfClass:NSDictionary.class]&&[result[@"success"] isEqual:@NO])||[NSStringFromClass([result class]) containsString:@"FlutterError"]||[result isEqual:@NO];
         if(type==5)dispatch_async(dispatch_get_main_queue(),^{if([Trial.sid isEqual:sid])TextPending=NO;});
-        if(failure)dispatch_async(dispatch_get_main_queue(),^{if(![Trial.sid isEqual:sid])return;if(type==3){Trial.phase=@"uncertain";Trial.note=@"SDK拒绝退出提交，请用实体按钮退出";Save();}else[Trial stop:@"SDK拒绝提交" now:Now()];});
+        if(failure)dispatch_async(dispatch_get_main_queue(),^{if(![Trial.sid isEqual:sid])return;if(type==3){Trial.phase=@"uncertain";Trial.note=@"SDK rejected exit submission; please use physical button on glasses";Save();}else[Trial stop:@"SDK rejected submission" now:Now()];});
     } copy]);}@catch(NSException *e){if(type==5)TextPending=NO;ok=NO;}Sending=NO;return ok;
 }
 static void Ensure(void){
     if(Trial)return;Trial=[TIOSubtitleTrial new];Trial.send=^BOOL(NSUInteger t,NSDictionary *j){return Send(t,j);};Trial.changed=^{Save();};
-    Guard=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *t){if(TextPending&&Now()>=TextDeadline){TextPending=NO;[Trial stop:@"SDK文字提交8秒无完成回调" now:Now()];}[Trial tick:Now()];}];
-    for(NSString *name in @[UIApplicationWillResignActiveNotification,@"TIOResearchClosed"])[NSNotificationCenter.defaultCenter addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){ConfirmedIdle=NO;[Trial stop:@"手机离开前台或研究页面关闭" now:Now()];}];
+    Guard=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *t){if(TextPending&&Now()>=TextDeadline){TextPending=NO;[Trial stop:@"No completion callback for SDK text submission after 8s" now:Now()];}[Trial tick:Now()];}];
+    for(NSString *name in @[UIApplicationWillResignActiveNotification,@"TIOResearchClosed"])[NSNotificationCenter.defaultCenter addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){
+        if([n.name isEqual:UIApplicationWillResignActiveNotification]&&Trial.navigation)return;
+        ConfirmedIdle=NO;[Trial stop:@"App left foreground or research screen closed" now:Now()];
+    }];
 }
 NSDictionary *TIOSubtitleNavigationStatus(void){Ensure();return @{@"sid":Trial.sid?:@"",@"navigation":@(Trial.navigation),@"phase":Trial.phase,@"pending":@(TextPending),@"available":@(Available()),@"note":Trial.note?:@""};}
 BOOL TIOSubtitleConfirmIdle(void){
     Ensure();if(Trial.active&&![@[@"stopping",@"uncertain"] containsObject:Trial.phase])return NO;
-    Trial.phase=@"idle";Trial.sid=nil;TextPending=NO;Capturing=NO;RestoreContext();ConfirmedIdle=YES;ConfirmedAt=Now();Trial.note=@"用户确认镜片已退出；非协议回执";Save();return YES;
+    Trial.phase=@"idle";Trial.sid=nil;TextPending=NO;Capturing=NO;RestoreContext();ConfirmedIdle=YES;ConfirmedAt=Now();Trial.note=@"User confirmed glasses exited; not protocol ACK";Save();return YES;
 }
 NSString *TIOSubtitleNavigationStart(void){
     Ensure();if(!NSThread.isMainThread||UIApplication.sharedApplication.applicationState!=UIApplicationStateActive||!Available()||!ConfirmedIdle||Now()-ConfirmedAt>=120||Trial.active)return nil;
@@ -73,7 +76,7 @@ NSString *TIOSubtitleNavigationStart(void){
     return Trial.sid;
 }
 BOOL TIOSubtitleNavigationText(NSString *sid,NSString *text){return NSThread.isMainThread&&Trial.navigation&&[Trial.sid isEqual:sid]&&!TextPending&&[Trial sendNavigationText:text now:Now()];}
-void TIOSubtitleNavigationStop(NSString *sid,NSString *reason){if(NSThread.isMainThread&&Trial.navigation&&[Trial.sid isEqual:sid])[Trial stop:reason now:Now()];}
+void TIOSubtitleNavigationStop(NSString *sid,NSString *reason){if(NSThread.isMainThread&&Trial.navigation&&[Trial.sid isEqual:sid]){[Trial stop:reason now:Now()];TIOSubtitleConfirmIdle();}}
 void TIOSubtitleObserveCall(id plugin,NSString *method,NSDictionary *args){
     if(!Sending)TIOProtocolObserveCall(plugin,method,args);
     if(Sending||![method isEqual:@"rayneonet_sendMessage"]||![args[@"businessId"] isEqual:@19]||![args[@"deviceId"] isKindOfClass:NSString.class])return;
@@ -81,7 +84,7 @@ void TIOSubtitleObserveCall(id plugin,NSString *method,NSDictionary *args){
     if(![sid isKindOfClass:NSString.class]||!sid.length)return;
     Ensure();
     if(Trial.active){
-        if(![args[@"deviceId"] isEqual:Device]||![sid isEqual:Trial.sid]){ConfirmedIdle=NO;[Trial stop:@"官方字幕会话或设备变化，停止本次实验" now:Now()];}
+        if(![args[@"deviceId"] isEqual:Device]||![sid isEqual:Trial.sid]){ConfirmedIdle=NO;[Trial stop:@"Official subtitle session or device changed, experiment stopped" now:Now()];}
         // Preserve owner route while stopping; never redirect cleanup to another device.
         return;
     }
@@ -90,10 +93,11 @@ void TIOSubtitleObserveCall(id plugin,NSString *method,NSDictionary *args){
     ConfirmedIdle=NO;
     if([e[@"type"] isEqual:@1]||([Device length]&&![args[@"deviceId"] isEqual:Device])){Stop=nil;PreviewAck=NO;Capturing=YES;}
     if([e[@"type"] isEqual:@7]&&[j[@"scope"] isEqual:@"temporary"]&&[j[@"config"] isKindOfClass:NSDictionary.class]&&[j[@"config"][@"is_display"] isEqual:@YES]&&![j[@"force"] boolValue]){
-        Capturing=YES;Plugin=plugin;NSMutableDictionary *r=[args mutableCopy];[r removeObjectForKey:@"payload"];Route=r;Device=args[@"deviceId"];Preview=j;ObservedSID=sid;Stop=nil;SampleAt=Now();ConfirmedIdle=NO;PreviewAck=NO;StopDifferentSID=NO;Trial.note=@"已抓到官方临时预览；退出后保存配置";
+        Capturing=YES;Plugin=plugin;NSMutableDictionary *r=[args mutableCopy];[r removeObjectForKey:@"payload"];Route=r;Device=args[@"deviceId"];Preview=j;ObservedSID=sid;Stop=nil;SampleAt=Now();ConfirmedIdle=NO;PreviewAck=NO;StopDifferentSID=NO;Trial.note=@"Captured official temporary preview; configuration will save on exit";
     }else if([args[@"deviceId"] isEqual:Device]&&[e[@"type"] isEqual:@3]&&PreviewAck&&Now()-SampleAt<120){
         NSDictionary *contract=TIOSubtitleStopContract(j,ObservedSID);
-        if(contract){Stop=contract;Capturing=NO;StopDifferentSID=![sid isEqual:ObservedSID];ConfirmedIdle=NO;BOOL saved=TIOProtocolSaveTemplate(@"subtitle",Device,@{@"config":Preview[@"config"]});Trial.note=saved?@"字幕配置已保存，重启无需重复采样；请确认镜片已退出":@"已取得本次配置；含未支持字段，未持久化";}
+        if(contract){Stop=contract;Capturing=NO;StopDifferentSID=![sid isEqual:ObservedSID];ConfirmedIdle=NO;BOOL saved=TIOProtocolSaveTemplate(@"subtitle",Device,@{@"config":Preview[@"config"]});Trial.note=saved?@"Subtitle config saved, no re-sampling needed after restart; verify lens has exited":@"Obtained current config; contains unsupported fields, not persisted";
+        }
     }
     if([args[@"deviceId"] isEqual:Device])Evidence(@"official-out",e);
 }
@@ -110,30 +114,30 @@ void TIOSubtitleObserveEvent(NSDictionary *event){
 @property NSTimer *timer;
 @end
 @implementation TIOSubtitlePanel
-- (void)viewDidLoad{[super viewDidLoad];Ensure();self.title=@"字幕导航 · 显示 v1.1";TIOStyleResearchTable(self);Save();}
+- (void)viewDidLoad{[super viewDidLoad];Ensure();self.title=@"Subtitle Navigation · HUD v1.1";TIOStyleResearchTable(self);Save();}
 - (void)viewWillAppear:(BOOL)a{[super viewWillAppear:a];__weak typeof(self) w=self;self.timer=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *t){[w.tableView reloadData];}];}
-- (void)viewDidDisappear:(BOOL)a{[super viewDidDisappear:a];[self.timer invalidate];self.timer=nil;[Trial stop:@"离开字幕测试页" now:Now()];}
+- (void)viewDidDisappear:(BOOL)a{[super viewDidDisappear:a];[self.timer invalidate];self.timer=nil;[Trial stop:@"Left subtitle test screen" now:Now()];}
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s{return 8;}
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)p{
     UITableViewCell *c=[[UITableViewCell alloc]initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];c.textLabel.numberOfLines=0;c.detailTextLabel.numberOfLines=0;
-    c.textLabel.text=@[@"当前采集状态",@"可选：重新学习官方字幕配置",@"确认眼镜已退出，当前没有任何任务",@"1 · 建立临时预览会话",@"2 · 发 A：7392／右转80米",@"3 · 发 B：9264／右转60米",@"4 · 发 C：3815／右转35米",@"停止测试（需要镜片确认退出）"][p.row];
+    c.textLabel.text=@[@"Current Capture Status",@"Optional: Re-learn Official Subtitle Config",@"Confirm Glasses Exited and Completely Idle",@"1 · Start Temporary Preview Session",@"2 · Send A: 7392 / Turn Right 80m",@"3 · Send B: 9264 / Turn Right 60m",@"4 · Send C: 3815 / Turn Right 35m",@"Stop Test (Verify Physical Glasses Exit)"][p.row];
     c.accessibilityIdentifier=[NSString stringWithFormat:@"subtitle-hud-%ld",(long)p.row];
-    if(p.row==0)c.detailTextLabel.text=[NSString stringWithFormat:@"subtitle-hud-v1.1\n%@ · %@\n预览样本：%@ 退出格式：%@\n已发%lu段 · 字幕音频消息%lu\n建立起计时%ld秒（不是镜片亮屏计时）",Trial.phase,Trial.note,Preview?@"有":@"无",Stop?@"有":@"无",(unsigned long)Trial.frame,(unsigned long)Trial.audioPackets,Trial.began?(long)(Now()-Trial.began):0];
-    if(p.row==1)c.detailTextLabel.text=@"正常使用无需此步骤；仅新配置不兼容时点预览并退出，保存通过校验的配置。";
-    if(p.row==2)c.detailTextLabel.text=@"需要你实际确认首页且没有录音/智记/提词/对话，不以手机发送成功判断退出。";
-    if(p.row==3)c.detailTextLabel.text=@"只发临时设置，不发字幕录音启动；等待同SID回执后才能发A。4分钟保护；锁屏/离开时请求退出。";
-    if(p.row>=4&&p.row<=6)c.detailTextLabel.text=@"mode3 / status0：测试同一句文字更新；观察覆盖还是追加、是否闪屏。检测到字幕音频消息立即停止；没有音频包不等于全链路未采音。";
+    if(p.row==0)c.detailTextLabel.text=[NSString stringWithFormat:@"subtitle-hud-v1.1\n%@ · %@\nPreview Sample: %@ | Exit Format: %@\nSent: %lu Segments | Audio Packets: %lu\nElapsed: %lds (session timer, not display-on duration)",Trial.phase,Trial.note,Preview?@"Present":@"None",Stop?@"Present":@"None",(unsigned long)Trial.frame,(unsigned long)Trial.audioPackets,Trial.began?(long)(Now()-Trial.began):0];
+    if(p.row==1)c.detailTextLabel.text=@"Not required for normal use; only needed if a new config is incompatible. Open preview and exit to save validated config.";
+    if(p.row==2)c.detailTextLabel.text=@"Verify physical glasses are on home screen with no active audio/recording/teleprompter/chat. Do not rely solely on phone status.";
+    if(p.row==3)c.detailTextLabel.text=@"Sends temporary preview only, no audio recording start; waits for matching SID receipt before sending A. 4-min timeout protection; exits on lock/dismiss.";
+    if(p.row>=4&&p.row<=6)c.detailTextLabel.text=@"mode3 / status0: Tests single-sentence text updates. Observe whether text replaces or appends and if flicker occurs. Stops immediately if audio is detected.";
     BOOL ready=[Trial.phase isEqual:@"ready"];
     BOOL on=p.row==0||p.row==1||(p.row==2&&(!Trial.active||[@[@"stopping",@"uncertain"] containsObject:Trial.phase]))||(p.row==3&&Available()&&ConfirmedIdle&&Now()-ConfirmedAt<120&&!Trial.active)||(p.row>=4&&p.row<=6&&ready&&Trial.frame==(NSUInteger)(p.row-4))||(p.row==7&&Trial.active);
     c.userInteractionEnabled=on;c.textLabel.textColor=on?UIColor.labelColor:UIColor.secondaryLabelColor;return c;
 }
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)p{
     [t deselectRowAtIndexPath:p animated:YES];
-    if(p.row==1){[Trial stop:@"回官方页面" now:Now()];TIOCloseResearch(self);}
-    if(p.row==2){UIAlertController *a=[UIAlertController alertControllerWithTitle:@"请以实际眼镜状态确认" message:@"眼镜已回首页，且录音、智记、提词、字幕、语音对话均已结束？这不是协议退出回执。" preferredStyle:UIAlertControllerStyleAlert];[a addAction:[UIAlertAction actionWithTitle:@"还没有" style:UIAlertActionStyleCancel handler:nil]];[a addAction:[UIAlertAction actionWithTitle:@"已实际确认" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){if(Trial.active&&![@[@"stopping",@"uncertain"] containsObject:Trial.phase])return;Trial.phase=@"idle";Trial.note=@"用户确认镜片已退出；仍不是协议回执";Trial.sid=nil;ConfirmedIdle=YES;ConfirmedAt=Now();Save();}]];[self presentViewController:a animated:YES completion:nil];}
+    if(p.row==1){[Trial stop:@"Returned to official page" now:Now()];TIOCloseResearch(self);}
+    if(p.row==2){UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Please Confirm Physical Glasses State" message:@"Are glasses on the home screen with recording, teleprompter, subtitles, and voice chat ended? This is a manual confirmation, not a protocol receipt." preferredStyle:UIAlertControllerStyleAlert];[a addAction:[UIAlertAction actionWithTitle:@"Not Yet" style:UIAlertActionStyleCancel handler:nil]];[a addAction:[UIAlertAction actionWithTitle:@"Confirmed Idle" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){if(Trial.active&&![@[@"stopping",@"uncertain"] containsObject:Trial.phase])return;Trial.phase=@"idle";Trial.note=@"User confirmed lens is idle; manual status";Trial.sid=nil;ConfirmedIdle=YES;ConfirmedAt=Now();Save();}]];[self presentViewController:a animated:YES completion:nil];}
     if(p.row==3&&Available()&&ConfirmedIdle&&Now()-ConfirmedAt<120){ConfirmedIdle=NO;[Trial startWithPreview:Preview stop:Stop now:Now()];}
     if(p.row>=4&&p.row<=6)[Trial nextAt:Now()];
-    if(p.row==7)[Trial stop:@"用户停止" now:Now()];[t reloadData];
+    if(p.row==7)[Trial stop:@"Stopped by user" now:Now()];[t reloadData];
 }
 @end
 UIViewController *TIOSubtitleHUDController(void){return [[TIOSubtitlePanel alloc]initWithStyle:UITableViewStyleInsetGrouped];}

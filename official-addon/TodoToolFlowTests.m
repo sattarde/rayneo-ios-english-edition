@@ -38,7 +38,7 @@ static NSDictionary *Call(NSString *name,NSUInteger index){return @{@"index":@(i
 static void Run(NSString *scenario){
     Scenario=scenario;Models=Writes=Searches=0;Pending=nil;ResultStatus=[scenario isEqual:@"not-ready"]?@"not_ready":[scenario isEqual:@"unknown"]?@"unknown":@"created";
     TodoRequest *r=[TodoRequest new];__block BOOL done=NO;__block NSUInteger finals=0;__block NSString *error=nil;__weak TodoRequest *weak=r;
-    r.update=^(NSString *text,BOOL final,NSString *e){if(final){done=YES;finals++;error=e;}if([scenario isEqual:@"cancel-before"]&&[text containsString:@"正在提交待办"]){[weak cancel];done=YES;}};
+    r.update=^(NSString *text,BOOL final,NSString *e){if(final){done=YES;finals++;error=e;}if([scenario isEqual:@"cancel-before"]&&([text containsString:@"正在提交待办"]||[text containsString:@"Submitting to-do"])){[weak cancel];done=YES;}};
     if(![scenario isEqual:@"disabled"])r.createTodo=^(NSString *title,void (^completion)(NSDictionary *)){
         assert([title isEqual:@"合成事项"]);Writes++;
         if([scenario isEqual:@"cancel-pending"]){Pending=[completion copy];done=YES;return;}

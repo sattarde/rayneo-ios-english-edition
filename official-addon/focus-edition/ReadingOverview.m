@@ -17,10 +17,10 @@ static NSArray *Rows(id value) {
 }
 NSString *TWReadingDuration(NSNumber *seconds) {
     NSNumber *n = Number(seconds);
-    if (!n) return @"暂无数据";
+    if (!n) return @"No Data";
     unsigned long long s = n.unsignedLongLongValue;
-    if (s > 0 && s < 60) return @"不足1分钟";
-    return [NSString stringWithFormat:@"%llu小时%llu分钟", s / 3600, s % 3600 / 60];
+    if (s > 0 && s < 60) return @"Less than 1 min";
+    return [NSString stringWithFormat:@"%llu hours%llu minutes", s / 3600, s % 3600 / 60];
 }
 NSDictionary *TWReadingStatsRequest(NSString *mode) {
     if (![@[@"weekly", @"monthly", @"annually", @"overall"] containsObject:mode]) return nil;
@@ -51,7 +51,7 @@ NSDictionary *TWReadingOverview(NSDictionary *response, NSString *mode) {
     for (id row in Rows(response[@"readStat"])) {
         if (![row isKindOfClass:NSDictionary.class]) continue;
         NSString *name = Text(row[@"stat"]), *counts = Text(row[@"counts"]);
-        if ([@[@"读过", @"读完", @"阅读", @"笔记"] containsObject:name] && counts.length)
+        if ([@[@"Read", @"Finished", @"Reading", @"Notes"] containsObject:name] && counts.length)
             [evidence addObject:@{@"label":name, @"value":counts}];
     }
     NSMutableArray *hours = [NSMutableArray new];
@@ -62,14 +62,14 @@ NSDictionary *TWReadingOverview(NSDictionary *response, NSString *mode) {
             if (time) [hours addObject:@{@"hour":@((i + 6) % 24), @"seconds":time}];
         }
     }
-    NSString *period = @{@"weekly":@"本周", @"monthly":@"本月", @"annually":@"本年", @"overall":@"累计"}[mode];
-    NSString *dayText = days ? [NSString stringWithFormat:@"%@天", days] : @"暂无数据";
-    return @{@"source":@"微信读书", @"period":period, @"mode":mode,
+    NSString *period = @{@"weekly":@"This Week", @"monthly":@"This Month", @"annually":@"This Year", @"overall":@"Total"}[mode];
+    NSString *dayText = days ? [NSString stringWithFormat:@"%@ days", days] : @"No Data";
+    return @{@"source":@"WeRead", @"period":period, @"mode":mode,
              @"totalSeconds":seconds ?: NSNull.null, @"duration":TWReadingDuration(seconds),
              @"readDays":days ?: NSNull.null, @"readDaysText":dayText,
              @"dayAverage":TWReadingDuration(Number(response[@"dayAverageReadTime"])),
              @"categories":categories, @"hourly":hours, @"depthEvidence":evidence,
-             @"depthExplanation":@"阅读投入参考，不代表理解程度；分类时长可能交叉，不计算占比。",
-             @"scopeExplanation":@"时长包含阅读与收听；有效阅读天数以服务端为准（单日满1分钟）。自然日均不等于阅读日均。",
+             @"depthExplanation":@"The reading input is a reference and does not represent the level of understanding; the classification time may overlap and the proportion is not calculated.",
+             @"scopeExplanation":@"The duration includes reading and listening; the number of valid reading days is determined by the server (1 minute in a single day). Natural daily average is not equal to reading daily average.",
              @"glassesSummary":[NSString stringWithFormat:@"%@ %@ · %@", period, TWReadingDuration(seconds), dayText]};
 }

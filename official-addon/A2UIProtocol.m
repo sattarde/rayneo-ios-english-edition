@@ -21,13 +21,13 @@ NSDictionary *TIOA2UIInstall(NSString *identifier,BOOL layout){
     if(!ID(identifier))return nil;
     NSArray *components=layout?@[
         @{@"id":@"root",@"component":@"Column",@"children":@[@"title",@"line",@"content"],@"align":@"stretch"},
-        @{@"id":@"title",@"component":@"Text",@"text":@"Turbo IO 自定义布局 8642",@"variant":@"h3"},
+        @{@"id":@"title",@"component":@"Text",@"text":@"Turbo IO Custom Layout 8642",@"variant":@"h3"},
         @{@"id":@"line",@"component":@"Divider",@"axis":@"horizontal"},
         @{@"id":@"content",@"component":@"Row",@"children":@[@"icon",@"body"],@"align":@"center"},
         @{@"id":@"icon",@"component":@"Icon",@"name":@"sunny"},
-        @{@"id":@"body",@"component":@"Text",@"text":@"图标 + 横排文字\n第二行校验 8642",@"variant":@"body"}]:@[@{@"id":@"root",@"component":@"Text",@"text":@"Turbo IO 自定义 UI 7392",@"variant":@"body"}];
-    NSDictionary *extra=@{@"widgetId":identifier,@"name":@"Turbo IO UI 测试",@"uiContent":@{@"createSurface":@{@"surfaceId":identifier,@"catalogId":@"https://rayneo.com/a2ui/catalogs/glasses-base/v1/catalog.json"},@"updateComponents":@{@"surfaceId":identifier,@"components":components}}};
+        @{@"id":@"body",@"component":@"Text",@"text":@"Icon + Horizontal Text\nSecond Line Verification 8642",@"variant":@"body"}]:@[@{@"id":@"root",@"component":@"Text",@"text":@"Turbo IO Custom UI 7392",@"variant":@"body"}];
+    NSDictionary *extra=@{@"widgetId":identifier,@"name":@"Turbo IO UI Test",@"uiContent":@{@"createSurface":@{@"surfaceId":identifier,@"catalogId":@"https://rayneo.com/a2ui/catalogs/glasses-base/v1/catalog.json"},@"updateComponents":@{@"surfaceId":identifier,@"components":components}}};
     NSString *text=[[NSString alloc]initWithData:[NSJSONSerialization dataWithJSONObject:extra options:NSJSONWritingSortedKeys error:nil] encoding:NSUTF8StringEncoding];
-    return @{@"cmd":@"widget_install",@"payload":@{@"data":@{@"type":@"a2ui",@"id":identifier,@"name":@"Turbo IO UI 测试",@"extras":text}}};
+    return @{@"cmd":@"widget_install",@"payload":@{@"data":@{@"type":@"a2ui",@"id":identifier,@"name":@"Turbo IO UI Test",@"extras":text}}};
 }
 NSDictionary *TIOA2UIUninstall(NSString *identifier){return ID(identifier)?@{@"cmd":@"widget_uninstall",@"payload":@{@"data":@{@"id":identifier}}}:nil;}

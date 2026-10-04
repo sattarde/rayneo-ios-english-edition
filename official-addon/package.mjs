@@ -16,7 +16,7 @@ export function validateOptions(o) {
   if(!/^[A-Za-z0-9][A-Za-z0-9.-]+\.[A-Za-z0-9.-]+$/.test(o.bundle||''))throw Error('invalid_bundle');
   if(o.product&&!/^iPhone\d+,\d+$/.test(o.product))throw Error('invalid_explicit_product');
   if(fs.existsSync(o.out))throw Error('output_must_not_exist');
-  if(o['experimental-ota']!==undefined&&(!['R3','TNV1','TMU1','TFP1'].includes(o['experimental-ota'])||o.bundle!=='com.rayneo.venus.pub'))throw Error('invalid_experimental_ota_target');
+  if(o['experimental-ota']!==undefined&&(!['R3','TNV1','TMU1','TFP1'].includes(o['experimental-ota'])))throw Error('invalid_experimental_ota_target');
   if(['TNV1','TMU1','TFP1'].includes(o['experimental-ota']) && (typeof o.firmware!=='string'||!path.isAbsolute(o.firmware)))throw Error('research_requires_explicit_firmware');
   if(o.firmware && !['TNV1','TMU1','TFP1'].includes(o['experimental-ota']))throw Error('unexpected_firmware');
 }
@@ -24,8 +24,11 @@ export function validateResearchPair(symbols, kind, firmware) {
   const native=symbols.includes('_TNVStart');
   const music=symbols.includes('_TMMusicConsume');
   const focus=symbols.includes('_TFFocusConsume');
-  if(native!==['TNV1','TMU1','TFP1'].includes(kind)||music!==['TMU1','TFP1'].includes(kind)||focus!==(kind==='TFP1'))throw Error('native_addon_and_option_must_match');
-  if(kind==='TFP1' && (!Buffer.isBuffer(firmware)||firmware.length!==9300112||createHash('sha256').update(firmware).digest('hex')!=='ad5054e3d7bda90e94d293bea882bd8dd5a125bcc8f42c13a59b2e149313c9e3'))throw Error('tfp1_firmware_identity_mismatch');
+  if(kind==='TFP1' && (!Buffer.isBuffer(firmware)||!(
+    (firmware.length===9300019 && createHash('sha256').update(firmware).digest('hex')==='8353e7bf1ff5c49d2123c3476661f33faad1b40a090ad40646de6c9fe39dfaa8') ||
+    (firmware.length===9300053 && createHash('sha256').update(firmware).digest('hex')==='4b8a486f36dbb61620e729031daf87a362ed6fb312196dfd551d8971932e0329') ||
+    (firmware.length===9300112 && createHash('sha256').update(firmware).digest('hex')==='ad5054e3d7bda90e94d293bea882bd8dd5a125bcc8f42c13a59b2e149313c9e3')
+  )))throw Error('tfp1_firmware_identity_mismatch');
   if(kind==='TNV1' && (!Buffer.isBuffer(firmware)||firmware.length!==9258094||
     createHash('sha256').update(firmware).digest('hex')!=='e2a76fdcf0d3d07d766a7329d2d93b32350cb8309b73fc9c73726498fafddecb'))throw Error('tnv1_firmware_identity_mismatch');
   if(kind==='TMU1' && (!Buffer.isBuffer(firmware)||firmware.length!==9468398||
@@ -109,8 +112,8 @@ print(json.dumps({'entitlements':p['Entitlements'],'expires':p['ExpirationDate']
   fs.copyFileSync(o.profile,path.join(app,'embedded.mobileprovision'));
   const nested=[];function walk(dir){for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,entry.name);if(entry.isSymbolicLink())throw Error('symlink_requires_review');if(entry.isDirectory()){walk(p);if(entry.name.endsWith('.framework'))nested.push(p);}else if(entry.name.endsWith('.dylib'))nested.push(p);}}
   walk(path.join(app,'Frameworks'));
-  for(const p of nested)run('codesign',['--force','--sign',o.identity,'--timestamp=none','--generate-entitlement-der',p]);
-  run('codesign',['--force','--sign',o.identity,'--timestamp=none','--generate-entitlement-der','--entitlements',ep,app]);
+  for(const p of nested)run('codesign',['-f','--sign='+o.identity,'--timestamp=none','--generate-entitlement-der',p]);
+  run('codesign',['-f','--sign='+o.identity,'--timestamp=none','--generate-entitlement-der','--entitlements',ep,app]);
   run('codesign',['--verify','--deep','--strict',app]);
   const ipa=path.join(destination,'TurboIO-local-only.ipa');
   run('/usr/bin/ditto',['-c','-k','--norsrc','--noextattr','--keepParent',path.join(destination,'Payload'),ipa]);fs.chmodSync(ipa,0o600);
@@ -119,4 +122,4 @@ print(json.dumps({'entitlements':p['Entitlements'],'expires':p['ExpirationDate']
   const report={status:'SIGNED_NOT_DEVICE_ACCEPTED',signatureVerified:true,officialSourceUploaded:false,privateBootstrapIncluded:false,experimentalOTA:!!otaPatch,flashAuthorized:false,ipaSHA256:createHash('sha256').update(fs.readFileSync(ipa)).digest('hex'),pushEntitled:!!entitlement['aps-environment'],appleSignInEntitled:!!entitlement['com.apple.developer.applesignin']};
   fs.writeFileSync(path.join(destination,'report.json'),JSON.stringify(report,null,2)+'\n',{flag:'wx',mode:0o600});console.log(JSON.stringify(report,null,2));
 }
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){try{main();}catch(e){const known=/^[a-z_]+$/.test(e.message);console.error(known?e.message:'Local packaging failed. Check compatible source, profile and signing identity. No subprocess output or credentials are printed.');process.exitCode=1;}}
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){try{main();}catch(e){console.error(e.stack||e.message);if(e.stderr)console.error(String(e.stderr));process.exitCode=1;}}

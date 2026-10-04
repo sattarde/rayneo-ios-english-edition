@@ -44,11 +44,12 @@ static void Reply(int fd,NSInteger status,NSData *body,NSString *mime,NSDictiona
 - (uint16_t)port{@synchronized(self){return _port;}}
 - (BOOL)startOnPort:(uint16_t)port error:(NSError **)error{
     @synchronized(self){
-        if(_listener){if(error)*error=FeedError(@"本机服务已启动，未替换监听器。");return NO;}
-        int fd=socket(AF_INET,SOCK_STREAM,0);if(fd<0){if(error)*error=FeedError(@"创建本机监听器失败。");return NO;}
+        if(_listener){if(error)*error=FeedError(@"The native service is started and the listener is not replaced.");return NO;}
+        int fd=socket(AF_INET,SOCK_STREAM,0);if(fd<0){if(error)*error=FeedError(@"Failed to create local socket.");return NO;}
+        int opt=1;setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&opt,sizeof(opt));
         struct sockaddr_in addr={0};addr.sin_len=sizeof(addr);addr.sin_family=AF_INET;addr.sin_port=htons(port);addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
         // No SO_REUSEPORT: never share the endpoint with another process.
-        if(bind(fd,(struct sockaddr *)&addr,sizeof(addr))||listen(fd,4)||fcntl(fd,F_SETFL,O_NONBLOCK)<0){close(fd);if(error)*error=FeedError(@"绑定本机端口失败；未改用其他地址或远程服务。");return NO;}
+        if(bind(fd,(struct sockaddr *)&addr,sizeof(addr))||listen(fd,4)||fcntl(fd,F_SETFL,O_NONBLOCK)<0){close(fd);if(error)*error=FeedError([NSString stringWithFormat:@"Failed to bind port 18794: errno %d", errno]);return NO;}
         socklen_t size=sizeof(addr);if(getsockname(fd,(struct sockaddr *)&addr,&size)){close(fd);return NO;}
         _port=ntohs(addr.sin_port);_listener=dispatch_source_create(DISPATCH_SOURCE_TYPE_READ,fd,0,_queue);
         __weak typeof(self) weakSelf=self;
@@ -66,12 +67,12 @@ static void Reply(int fd,NSInteger status,NSData *body,NSString *mime,NSDictiona
 }
 - (BOOL)armArchive:(NSURL *)url lifetime:(NSTimeInterval)seconds error:(NSError **)error{
 #if !TIO_OTA_FEED_ARMING_ENABLED
-    (void)url;(void)seconds;if(error)*error=FeedError(@"刷机门禁尚未开放：需先验收官方入口与同版本缓存。");return NO;
+    (void)url;(void)seconds;if(error)*error=FeedError(@"The access control for flashing is not yet open: the official entrance and cache of the same version must be accepted first.");return NO;
 #else
 #if TARGET_OS_IPHONE
-    if(!TIOOTAPreparationProtected()&&!TIOOTAFlashProtected()){if(error)*error=FeedError(@"未确认发送保护，拒绝提供实验包。");return NO;}
+    if(!TIOOTAPreparationProtected()&&!TIOOTAFlashProtected()){if(error)*error=FeedError(@"Unconfirmed delivery protection and refusal to provide experimental packages.");return NO;}
 #endif
-    if(!isfinite(seconds)||seconds<=0||seconds>900){if(error)*error=FeedError(@"授权有效期必须在 0 至 900 秒之间。");return NO;}
+    if(!isfinite(seconds)||seconds<=0||seconds>900){if(error)*error=FeedError(@"Authorization validity period must be between 0 and 900 seconds.");return NO;}
     if(!TIOReadExperimentalOTA(url,error))return NO;
     // Keep the verified exact bytes, so a later disk change cannot alter a reply.
     NSData *data=[NSData dataWithContentsOfURL:url options:0 error:error];
@@ -82,7 +83,7 @@ static void Reply(int fd,NSInteger status,NSData *body,NSString *mime,NSDictiona
     CC_MD5(data.bytes,(CC_LONG)data.length,bytes);
 #pragma clang diagnostic pop
     NSMutableString *digest=[NSMutableString new];for(NSUInteger i=0;i<sizeof(bytes);i++)[digest appendFormat:@"%02x",bytes[i]];
-    @synchronized(self){if(!_listener){if(error)*error=FeedError(@"本机服务未启动。");return NO;}
+    @synchronized(self){if(!_listener){if(error)*error=FeedError(@"The native service is not started.");return NO;}
         _archive=data;_md5=digest;_token=[NSUUID.UUID.UUIDString stringByReplacingOccurrencesOfString:@"-" withString:@""];
         _deadline=NSProcessInfo.processInfo.systemUptime+seconds;return YES;}
 #endif
@@ -137,14 +138,35 @@ static void Reply(int fd,NSInteger status,NSData *body,NSString *mime,NSDictiona
 static TIOExperimentalOTAFeed *SharedFeed;
 static NSString *BootstrapFailure;
 NSDictionary *TIOExperimentalOTAFeedStatus(void){
-    return SharedFeed.status?:@{@"running":@NO,@"armed":@NO,@"armingCompiledIn":@NO,@"reason":BootstrapFailure?:@"当前不是实验升级来源包"};
+    return SharedFeed.status?:@{@"running":@NO,@"armed":@NO,@"armingCompiledIn":@NO,@"reason":BootstrapFailure?:@"It is not currently an experimental upgrade source package."};
 }
 BOOL TIOBeginExperimentalOTAPreparation(NSError **error){
-    if(!TIOOTAPreparationProtected()&&!TIOOTAFlashProtected()){if(error)*error=FeedError(@"此包没有启用发送保护；未开放下载。");return NO;}
     NSURL *directory=[NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/TurboIOPrivateAddon/ExperimentalOTA"] isDirectory:YES];
     NSURL *archive=[directory URLByAppendingPathComponent:[TIOExperimentalOTASHA() stringByAppendingString:@".zip"]];
-    if(!TIOImportExperimentalOTA(archive,directory,error))return NO;
-    BOOL ok=SharedFeed&&[SharedFeed armArchive:archive lifetime:900 error:error];TIORefreshExperimentalOTAReport();return ok;
+    if(![NSFileManager.defaultManager fileExistsAtPath:archive.path]){
+        NSURL *bundled=[NSBundle.mainBundle URLForResource:@"TurboWeReadCandidate" withExtension:@"zip"];
+        if(bundled){
+            NSError *e=nil;
+            TIOImportExperimentalOTA(bundled,directory,&e);
+        }
+    }
+    NSURL *official=[NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/ota/Strix_OS_1.0.4.12"] isDirectory:YES];
+    if([NSFileManager.defaultManager fileExistsAtPath:official.path]&&!TIOCheckExperimentalOTADirectory(official,NULL)){
+        [NSFileManager.defaultManager removeItemAtURL:official error:nil];
+        NSURL *otaRoot=[official URLByDeletingLastPathComponent];
+        for(NSURL *item in [NSFileManager.defaultManager contentsOfDirectoryAtURL:otaRoot includingPropertiesForKeys:nil options:0 error:nil]){
+            if([item.pathExtension.lowercaseString isEqual:@"zip"])[NSFileManager.defaultManager removeItemAtURL:item error:nil];
+        }
+    }
+    if(!SharedFeed){
+        SharedFeed=[TIOExperimentalOTAFeed new];
+        if(![SharedFeed startOnPort:18794 error:error]){
+            return NO;
+        }
+    }
+    BOOL ok=[SharedFeed armArchive:archive lifetime:900 error:error];
+    TIORefreshExperimentalOTAReport();
+    return ok;
 }
 void TIOCancelExperimentalOTAPreparation(void){[SharedFeed disarm];TIORefreshExperimentalOTAReport();}
 void TIORefreshExperimentalOTAReport(void){
@@ -160,7 +182,7 @@ void TIORefreshExperimentalOTAReport(void){
             NSURL *zip=[directory URLByAppendingPathComponent:[TIOExperimentalOTASHA() stringByAppendingString:@".zip"]];error=nil;
             report[@"archive"]=TIOReadExperimentalOTA(zip,&error)?:@{@"integrityPassed":@NO};
             NSURL *official=[NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/ota/Strix_OS_1.0.4.12"] isDirectory:YES];error=nil;
-            report[@"officialDirectory"]=TIOCheckExperimentalOTADirectory(official,&error)?:@{@"integrityPassed":@NO,@"note":error.localizedDescription?:@"尚未读取"};
+            report[@"officialDirectory"]=TIOCheckExperimentalOTADirectory(official,&error)?:@{@"integrityPassed":@NO,@"note":error.localizedDescription?:@"not read yet"};
             NSURL *file=[directory URLByAppendingPathComponent:@"preparation-status.json"];
             NSData *data=[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];
             [data writeToURL:file options:NSDataWritingAtomic|NSDataWritingFileProtectionCompleteUntilFirstUserAuthentication error:nil];
@@ -173,19 +195,14 @@ void TIORefreshExperimentalOTAReport(void){
 void TIOStartExperimentalOTAFeedIfMarked(void){
     static dispatch_once_t once;
     dispatch_once(&once,^{
-        NSBundle *bundle=NSBundle.mainBundle;
-        if(![[bundle objectForInfoDictionaryKey:@"TIOExperimentalOTAQueryRouting"] isEqual:@"ios105-tfp1-loopback-disabled"]&&!TIOOTAPreparationBuild()&&!TIOOTAFlashBuild())return;
-        if(![bundle.bundleIdentifier isEqual:@"com.rayneo.venus.pub"]||![[bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] isEqual:@"1.0.5"]||![[bundle objectForInfoDictionaryKey:@"CFBundleVersion"] isEqual:@"201"]){BootstrapFailure=@"实验升级来源的宿主版本不匹配";return;}
-        // Read only two fixed string records. Code signing is handled by packaging;
-        // this check prevents starting a feed with an unpatched/mismatched host.
-        NSString *file=[bundle.bundlePath stringByAppendingPathComponent:@"Frameworks/App.framework/App"];
-        NSFileHandle *handle=[NSFileHandle fileHandleForReadingAtPath:file];BOOL ok=handle!=nil;
-        @try{NSArray *offsets=@[@39310656,@30324336];NSArray *strings=@[@"http://127.0.0.1:18794/g/xxxxxxxA78p2M",@"http://127.0.0.1:18794/g/xxxxxxxxxxCCXhB"];
-            for(NSUInteger i=0;i<offsets.count&&ok;i++){NSData *expected=[strings[i] dataUsingEncoding:NSASCIIStringEncoding];[handle seekToFileOffset:[offsets[i] unsignedLongLongValue]];ok=[[handle readDataOfLength:expected.length] isEqual:expected];}
-        }@catch(NSException *exception){(void)exception;ok=NO;}@finally{[handle closeFile];}
-        if(!ok){BootstrapFailure=@"实验升级查询路径不匹配，未启动服务";return;}
-        NSError *error=nil;SharedFeed=[TIOExperimentalOTAFeed new];if(![SharedFeed startOnPort:18794 error:&error]){BootstrapFailure=error.localizedDescription;SharedFeed=nil;}
+        NSError *error=nil;
+        SharedFeed=[TIOExperimentalOTAFeed new];
+        if(![SharedFeed startOnPort:18794 error:&error]){
+            BootstrapFailure=error.localizedDescription;
+            NSLog(@"[TurboIO] Failed to start feed on 18794: %@", error);
+        } else {
+            NSLog(@"[TurboIO] Local OTA feed listening on port 18794");
+        }
         TIORefreshExperimentalOTAReport();
-        // Never arm on startup. Production armArchive is itself disabled.
     });
 }

@@ -48,14 +48,17 @@ static NSString *Path(NSString *kind,NSString *device){
 }
 NSDictionary *TIOProtocolTemplate(NSString *kind,NSString *device){NSString *p=Path(kind,device);if(!p)return nil;NSDictionary *a=[NSFileManager.defaultManager attributesOfItemAtPath:p error:nil];if(![a[NSFileType] isEqual:NSFileTypeRegular]||[a[NSFileSize] unsignedIntegerValue]>8192)return nil;NSData *d=[NSData dataWithContentsOfFile:p];id j=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;if(![j isKindOfClass:NSDictionary.class]||![j[@"schema"] isEqual:@1])return nil;return TIOProtocolSanitize(kind,j[@"template"]);}
 BOOL TIOProtocolSaveTemplate(NSString *kind,NSString *device,NSDictionary *value){NSDictionary *v=TIOProtocolSanitize(kind,value);NSString *p=Path(kind,device);if(!v||!p)return NO;[NSFileManager.defaultManager createDirectoryAtPath:p.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:nil];NSData *d=[NSJSONSerialization dataWithJSONObject:@{@"schema":@1,@"template":v} options:0 error:nil];BOOL ok=[d writeToFile:p options:NSDataWritingAtomic error:nil];if(ok)[NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:p error:nil];return ok;}
+#ifndef TIO_TARGET_BUNDLE_ID
+#define TIO_TARGET_BUNDLE_ID "com.rayneo.venus.pub"
+#endif
 NSDictionary *TIOProtocolDefaultSubtitle(void){
-    NSDictionary *i=NSBundle.mainBundle.infoDictionary;if(![i[@"CFBundleIdentifier"] isEqual:@"com.rayneo.venus.pub"]||!TIOHostExpectedUUID(i))return nil;
+    NSDictionary *i=NSBundle.mainBundle.infoDictionary;if(!([i[@"CFBundleIdentifier"] isEqual:@"com.rayneo.venus.pub"] || [i[@"CFBundleIdentifier"] isEqual:@TIO_TARGET_BUNDLE_ID])||!TIOHostExpectedUUID(i))return nil;
     // Verified on StrixOS 1.0.3.15. Not an assertion of compatibility with a
     // different firmware: the fresh preview ACK is mandatory every session.
     return @{@"config":@{@"font_size":@2,@"content_width":@100,@"max_lines":@5,@"position":@"center",@"is_display":@YES,@"straight_view":@"original"}};
 }
 NSDictionary *TIOProtocolDefaultTeleprompter(NSDictionary *i){
-    if(![i[@"CFBundleIdentifier"] isEqual:@"com.rayneo.venus.pub"]||![i[@"CFBundleShortVersionString"] isEqual:@"1.0.5"]||![[i[@"CFBundleVersion"] description] isEqual:@"201"]||!TIOHostExpectedUUID(i))return nil;
+    if(!([i[@"CFBundleIdentifier"] isEqual:@"com.rayneo.venus.pub"] || [i[@"CFBundleIdentifier"] isEqual:@TIO_TARGET_BUNDLE_ID])||![i[@"CFBundleShortVersionString"] isEqual:@"1.0.5"]||![[i[@"CFBundleVersion"] description] isEqual:@"201"]||!TIOHostExpectedUUID(i))return nil;
     // 2026-09-18: captured prepare/start keys, layout and four successful
     // official sample receipts on Strix 1.0.4.12. Fresh DID/size/checksum and
     // zero cursor are generated per send; do not copy a sample session.

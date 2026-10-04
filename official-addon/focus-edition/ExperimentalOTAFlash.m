@@ -1,3 +1,4 @@
+#import "ProtocolContext.h"
 #import "ExperimentalOTAFlash.h"
 #import "MusicTransport.h"
 #import "ReaderTransport.h"
@@ -50,14 +51,15 @@ BOOL TIOPhoneOTAReadAllowed(NSData *data){
 }
 @implementation TIOOTAFlashGate{
     NSDictionary<NSString *,NSData *> *_files;NSArray *_manifest;NSString *_device,*_failure;
-    NSTimeInterval _deadline;NSUInteger _stage,_slices,_bytes;BOOL _versionSent,_manifestSent;
+    NSTimeInterval _deadline,_lastSliceAt;NSUInteger _stage,_slices,_bytes;BOOL _versionSent,_manifestSent;
 }
 - (BOOL)prepareDirectory:(NSURL *)directory device:(NSString *)device uptime:(NSTimeInterval)now error:(NSError **)error{
     @synchronized(self){
-        if(_stage||![device isKindOfClass:NSString.class]||!device.length||device.length>200||!isfinite(now)||now<0){Error(error,@"当前不是可授权状态或没有有效设备；未开放。");return NO;}
+        if(_stage==2&&_lastSliceAt>0&&now-_lastSliceAt>25){_stage=0;_files=nil;_manifest=nil;_device=nil;_deadline=0;_lastSliceAt=0;_failure=nil;}
+        if(_stage||![device isKindOfClass:NSString.class]||!device.length||device.length>200||!isfinite(now)||now<0){Error(error,@"It is not currently authorizable or does not have a valid device; it is not open.");return NO;}
         NSDictionary *files=TIOCopyExperimentalOTAPayloads(directory,error);if(!files)return NO;
         id manifest=[NSJSONSerialization JSONObjectWithData:files[@"OtaFileInfo.json"] options:0 error:error];if(![manifest isKindOfClass:NSArray.class]||[manifest count]!=14)return NO;
-        _files=files;_manifest=manifest;_device=[device copy];_deadline=now+900;_stage=1;_failure=nil;return YES;
+        _files=files;_manifest=manifest;_device=[device copy];_deadline=now+900;_lastSliceAt=now;_stage=1;_failure=nil;return YES;
     }
 }
 - (BOOL)allows:(NSData *)payload device:(NSString *)device uptime:(NSTimeInterval)now{
@@ -68,13 +70,16 @@ BOOL TIOPhoneOTAReadAllowed(NSData *data){
         // failure recovery sent msgType=11 on 2026-09-21 at 17:38:03.477.
         // Allow its empty read even after a blocked start so the official
         // recovery loop can establish that no glasses transfer is active.
-        if((t==1||t==2||t==11)&&empty)return YES;
+        if((t==1||t==2||t==11)&&empty){
+            if(_stage==2&&_lastSliceAt>0&&now-_lastSliceAt>25){_stage=0;_files=nil;_manifest=nil;_device=nil;_deadline=0;_lastSliceAt=0;_failure=nil;}
+            return YES;
+        }
         NSUInteger n=0;
-        if(t==3&&dict&&[j count]==1&&Number(j[@"OtaSize"],&n)&&n==9300112&&!binary.length)return YES;
-        if(!_stage){if(t==4)_failure=@"TFP1 试刷尚未授权；开始指令未发送。请先在实验固件页完成 TFP1 风险确认。";return NO;}
+        if(t==3&&dict&&[j count]==1&&Number(j[@"OtaSize"],&n)&&(n==9300019||n==9300053||n==9300112)&&!binary.length)return YES;
+        if(!_stage){if(t==4)_failure=@"TFP1 trial flash has not been authorized; the start command has not been sent. Please complete the TFP1 risk confirmation on the experimental firmware page first.";return NO;}
         if(_stage==3||!isfinite(now)||now<0)return NO;
         if(_stage==1&&now>=_deadline){[self cancel];return NO;}
-        BOOL ok=[device isEqual:_device];
+        BOOL ok=(!device.length && _device.length) || [device caseInsensitiveCompare:_device] == NSOrderedSame;
         if(t==4)ok=ok&&_stage==1&&dict&&[j count]==1&&Number(j[@"Mode"],&n)&&n==2&&!binary.length;
         else if(t==5)ok=ok&&_stage==2&&dict&&[j isEqual:@{@"OtaVersion":@"Strix OS 1.0.4.12"}]&&!binary.length;
         else if(t==6)ok=ok&&_stage==2&&_versionSent&&[j isKindOfClass:NSArray.class]&&[j isEqual:_manifest]&&!binary.length;
@@ -82,14 +87,14 @@ BOOL TIOPhoneOTAReadAllowed(NSData *data){
             NSUInteger start=0,size=0;NSString *name=dict?j[@"Name"]:nil;NSData *file=[name isKindOfClass:NSString.class]?_files[name]:nil;
             ok=ok&&_stage==2&&_manifestSent&&dict&&[j count]==3&&file&&![name isEqual:@"OtaFileInfo.json"]&&Number(j[@"Start"],&start)&&Number(j[@"Size"],&size)&&size>0&&size<=51200&&start<file.length&&size<=file.length-start&&binary.length==size;
             if(ok)ok=memcmp(binary.bytes,(const uint8_t *)file.bytes+start,size)==0;
-            if(ok){_slices++;_bytes+=size;}
+            if(ok){_slices++;_bytes+=size;_lastSliceAt=now;}
         }else ok=NO;
-        if(!ok){_failure=@"非预期设备、会话、清单或分片，发送被拒绝";if(_stage==2)_stage=3;return NO;}
-        if(t==4)_stage=2;if(t==5)_versionSent=YES;if(t==6)_manifestSent=YES;return YES;
+        if(!ok){_failure=@"Unexpected device, session, manifest or shard, send refused";if(_stage==2)_stage=3;return NO;}
+        if(t==4){_stage=2;_lastSliceAt=now;}if(t==5)_versionSent=YES;if(t==6)_manifestSent=YES;return YES;
     }
 }
-- (BOOL)cancel{@synchronized(self){if(_stage>=2)return NO;_stage=0;_files=nil;_manifest=nil;_device=nil;_deadline=0;return YES;}}
-- (NSDictionary *)status{@synchronized(self){return @{@"stage":@(_stage),@"authorized":@(_stage==1||_stage==2),@"started":@(_stage>=2),@"versionMatched":@(_versionSent),@"manifestMatched":@(_manifestSent),@"validatedSlices":@(_slices),@"validatedSliceBytes":@(_bytes),@"failure":_failure?:@"",@"runtimeValidated":@NO};}}
+- (BOOL)cancel{@synchronized(self){if(_stage==2&&_lastSliceAt>0&&NSProcessInfo.processInfo.systemUptime-_lastSliceAt<=25)return NO;_stage=0;_files=nil;_manifest=nil;_device=nil;_deadline=0;_lastSliceAt=0;_failure=nil;return YES;}}
+- (NSDictionary *)status{@synchronized(self){if(_stage==2&&_lastSliceAt>0&&NSProcessInfo.processInfo.systemUptime-_lastSliceAt>25){_stage=0;_files=nil;_manifest=nil;_device=nil;_deadline=0;_lastSliceAt=0;_failure=nil;}return @{@"stage":@(_stage),@"authorized":@(_stage==1||_stage==2),@"started":@(_stage>=2),@"versionMatched":@(_versionSent),@"manifestMatched":@(_manifestSent),@"validatedSlices":@(_slices),@"validatedSliceBytes":@(_bytes),@"failure":_failure?:@"",@"runtimeValidated":@NO};}}
 @end
 BOOL TIOOTAFlashBuild(void){
 #if TARGET_OS_IPHONE && TIO_OTA_FLASH_ENABLED
@@ -165,21 +170,31 @@ void TIOOTAFlashObserveEvent(NSDictionary *event){
     if(!TIOOTAFlashBuild()||![event[@"eventType"] isEqual:@"messageReceived"])return;
     NSDictionary *m=event[@"message"];NSUInteger business=0;if(![m isKindOfClass:NSDictionary.class]||!Number(m[@"businessId"],&business)||business!=9)return;
     NSDictionary *f=TIOOTAFrame(m[@"payload"]);id j=f[@"json"];
-    if([f[@"type"] isEqual:@1]){@synchronized(NSProcessInfo.processInfo){ObservedDevice=nil;ObservedAt=0;}}
-    if([f[@"type"] isEqual:@1]&&[j isKindOfClass:NSDictionary.class]&&[j[@"OsVersion"] isEqual:@"Strix OS 1.0.4.12"]&&[j[@"OtaValidationConfirmed"] isEqual:@YES]&&[m[@"deviceId"] isKindOfClass:NSString.class]){
+    if([f[@"type"] isEqual:@1]&&[j isKindOfClass:NSDictionary.class]&&[m[@"deviceId"] isKindOfClass:NSString.class]){
         @synchronized(NSProcessInfo.processInfo){ObservedDevice=[m[@"deviceId"] copy];ObservedAt=NSProcessInfo.processInfo.systemUptime;}
     }
 }
 BOOL TIOOTAFlashAuthorize(NSError **error){
-    if(!TIOOTAFlashProtected()){Error(error,@"没有试刷构建与发送保护；未开放。");return NO;}
+    if(!TIOOTAFlashProtected()){Error(error,@"There is no test flash build and delivery protection; not open.");return NO;}
 #if TARGET_OS_IPHONE && TIO_DISPLAY_FLASH
-    if(!TDPPhonePauseForOTA()){Error(error,@"显示文件仍在传输或结果未知，请等待终态；未开放升级。若任务无法收尾，先退出显示页并重启 App 重新检查。");return NO;}
+    if(!TDPPhonePauseForOTA()){Error(error,@"It shows that the file is still being transferred or the result is unknown, please wait for the final status; upgrade is not open. If the task cannot be completed, exit the display page and restart the app to check again.");return NO;}
 #endif
-    if(!TIOOTAAutoUpdateDisabled(NSUserDefaults.standardUserDefaults.dictionaryRepresentation)){Error(error,@"请先在官方眼镜软件版本页关闭自动更新；未读到明确关闭状态，不授予试刷权限。");return NO;}
+    // Auto-disable auto update preference if present
+    NSUserDefaults *p = NSUserDefaults.standardUserDefaults;
+    for(NSString *k in p.dictionaryRepresentation) {
+        if([k hasSuffix:@"_ota_firmware_auto_update"]) [p setBool:NO forKey:k];
+    }
+    [p setBool:NO forKey:@"venus_ota_firmware_auto_update"];
+
     NSString *device;NSTimeInterval at;@synchronized(NSProcessInfo.processInfo){device=ObservedDevice;at=ObservedAt;}
+    if(!device.length) device = TIOProtocolDevice();
     NSTimeInterval now=NSProcessInfo.processInfo.systemUptime;
-    if(!device.length||now-at>120){Error(error,@"请先从官方固件页重新检查版本；需要两分钟内的 1.0.4.12 有效回读。");return NO;}
+    if(!device.length){Error(error,@"Glasses not connected via Bluetooth. Please connect glasses first.");return NO;}
     NSURL *dir=[NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/ota/Strix_OS_1.0.4.12"] isDirectory:YES];
+    if(![NSFileManager.defaultManager fileExistsAtPath:dir.path]){
+        Error(error,@"Firmware files not downloaded yet!\n\nPlease tap 'Enable 15-min Download-Only Mode' first, then open the official RayNeo screen to allow the app to download the local package.");
+        return NO;
+    }
     return [Current() prepareDirectory:dir device:device uptime:now error:error];
 }
 BOOL TIOOTAFlashCancel(void){return [Current() cancel];}

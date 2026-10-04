@@ -6,7 +6,7 @@ int main(void){@autoreleasepool{
     NSData *data=[NSFileHandle.fileHandleWithStandardInput readDataToEndOfFile];
     NSDictionary *keys=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
     if(![keys isKindOfClass:NSDictionary.class]||![keys[@"deepseek"] isKindOfClass:NSString.class]||![keys[@"tinyfish"] isKindOfClass:NSString.class])return 2;
-    NSString *q=NSProcessInfo.processInfo.environment[@"TIO_SMOKE_QUESTION"]?:@"请实际联网搜索 TinyFish Search API 的官方地址，用一句中文说明并附官方来源URL。";
+    NSString *q=NSProcessInfo.processInfo.environment[@"TIO_SMOKE_QUESTION"]?:@"Please actually search the official address of TinyFish Search API online, use a Chinese description and attach the official source URL.";
     NSMutableDictionary *payload=[TIOChatRequest(@"deepseek-flash",q) mutableCopy];payload[@"thinking"]=@{@"type":@"disabled"};
     __block BOOL ended=NO,failed=NO;__block NSUInteger updates=0;__block NSString *last=@"";NSDate *start=NSDate.date;
     TIOWebChatRequest *r=[TIOWebChatRequest new];__weak TIOWebChatRequest *weak=r;

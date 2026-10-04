@@ -31,26 +31,26 @@ void TIOImportKnowledgeConnection(void){
 - (void)URLSession:(NSURLSession *)s task:(NSURLSessionTask *)t willPerformHTTPRedirection:(NSHTTPURLResponse *)r newRequest:(NSURLRequest *)q completionHandler:(void(^)(NSURLRequest *))done{done(nil);}
 - (void)request:(NSString *)path body:(NSDictionary *)body completion:(void(^)(NSDictionary *,NSString *))completion{
     if(self.cancelled)return;TIOImportKnowledgeConnection();
-    NSString *endpoint=TIOKnowledgeEndpoint(),*token=Token();if(!endpoint.length||!token.length){completion(nil,@"请先配置知识库连接。");return;}
+    NSString *endpoint=TIOKnowledgeEndpoint(),*token=Token();if(!endpoint.length||!token.length){completion(nil,@"Please configure the knowledge base connection first.");return;}
     if(!self.session){NSURLSessionConfiguration *c=NSURLSessionConfiguration.ephemeralSessionConfiguration;c.HTTPCookieStorage=nil;c.URLCache=nil;c.URLCredentialStorage=nil;self.session=[NSURLSession sessionWithConfiguration:c delegate:self delegateQueue:NSOperationQueue.mainQueue];}
     NSMutableURLRequest *r=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:[endpoint stringByAppendingString:path]]];r.timeoutInterval=25;[r setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];[r setValue:@"application/json" forHTTPHeaderField:@"Accept"];
     if(body){r.HTTPMethod=@"POST";r.HTTPBody=[NSJSONSerialization dataWithJSONObject:body options:0 error:nil];[r setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];}
     [[self.session dataTaskWithRequest:r completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){dispatch_async(dispatch_get_main_queue(),^{if(self.cancelled)return;NSInteger code=[response isKindOfClass:NSHTTPURLResponse.class]?[(NSHTTPURLResponse *)response statusCode]:0;NSDictionary *j=data.length<=256*1024?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
-        if(error||![j isKindOfClass:NSDictionary.class]||(code!=200&&code!=202)){completion(nil,[NSString stringWithFormat:@"知识库连接失败（HTTP %ld）。请检查 Mac 服务、网络与令牌。",(long)code]);return;}completion(j,nil);
+        if(error||![j isKindOfClass:NSDictionary.class]||(code!=200&&code!=202)){completion(nil,[NSString stringWithFormat:@"Knowledge base connection failed (HTTP %ld). Please check Mac Services, Networking & Tokens.",(long)code]);return;}completion(j,nil);
     });}] resume];
 }
 - (void)sources:(void(^)(NSDictionary *,NSString *))done{[self request:@"/sources" body:nil completion:done];}
 - (void)poll:(NSString *)ident completion:(void(^)(NSDictionary *,NSString *))done{
-    NSUUID *uuid=[[NSUUID alloc]initWithUUIDString:ident];if(!uuid){done(nil,@"查询编号无效。");return;}
+    NSUUID *uuid=[[NSUUID alloc]initWithUUIDString:ident];if(!uuid){done(nil,@"Invalid query number.");return;}
     [self request:[@"/jobs/" stringByAppendingString:ident.lowercaseString] body:nil completion:^(NSDictionary *j,NSString *e){if(e){done(nil,e);return;}[Settings() setObject:[NSJSONSerialization dataWithJSONObject:j options:0 error:nil] forKey:@"snapshotJSON"];
         NSString *state=j[@"status"];if([@[@"completed",@"failed",@"interrupted"] containsObject:state]||!self.started||-[self.started timeIntervalSinceNow]>80){done(j,nil);return;}
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC),dispatch_get_main_queue(),^{if(!self.cancelled)[self poll:ident completion:done];});
     }];
 }
 - (void)query:(NSDictionary *)input completion:(void(^)(NSDictionary *,NSString *))done{
-    if(!TIOKnowledgeEnabled()){done(nil,@"请开启知识库工具并选择已接入的 Codex。");return;}
+    if(!TIOKnowledgeEnabled()){done(nil,@"Please open the knowledge base tool and select the connected Codex.");return;}
     NSMutableDictionary *body=[input mutableCopy];body[@"requestId"]=NSUUID.UUID.UUIDString.lowercaseString;self.started=NSDate.date;
-    [self request:@"/query" body:body completion:^(NSDictionary *j,NSString *e){if(e){done(nil,e);return;}NSString *ident=j[@"id"];if(![ident isKindOfClass:NSString.class]){done(nil,@"服务未返回查询编号。");return;}[Settings() setObject:ident forKey:@"lastJob"];[Settings() setObject:[NSJSONSerialization dataWithJSONObject:j options:0 error:nil] forKey:@"snapshotJSON"];[self poll:ident completion:done];}];
+    [self request:@"/query" body:body completion:^(NSDictionary *j,NSString *e){if(e){done(nil,e);return;}NSString *ident=j[@"id"];if(![ident isKindOfClass:NSString.class]){done(nil,@"The service did not return the query number.");return;}[Settings() setObject:ident forKey:@"lastJob"];[Settings() setObject:[NSJSONSerialization dataWithJSONObject:j options:0 error:nil] forKey:@"snapshotJSON"];[self poll:ident completion:done];}];
 }
-- (void)refreshLast:(void(^)(NSDictionary *,NSString *))done{NSString *ident=[Settings() stringForKey:@"lastJob"];if(!ident){done(nil,@"还没有知识库查询。");return;}self.started=nil;[self poll:ident completion:done];}
+- (void)refreshLast:(void(^)(NSDictionary *,NSString *))done{NSString *ident=[Settings() stringForKey:@"lastJob"];if(!ident){done(nil,@"There are no knowledge base queries yet.");return;}self.started=nil;[self poll:ident completion:done];}
 @end

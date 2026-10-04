@@ -10,6 +10,7 @@ FOUNDATION_EXPORT NSDictionary * _Nullable TIOWebSearchResults(NSData *data);
 @interface TIOWebStream : NSObject
 @property(nonatomic,readonly) BOOL done;
 @property(nonatomic,readonly) BOOL failed;
+@property(nonatomic,readonly,nullable) NSString *failureReason;
 @property(nonatomic,readonly) NSString *answer;
 @property(nonatomic,readonly) NSArray<NSDictionary *> *calls;
 - (BOOL)append:(NSData *)data;

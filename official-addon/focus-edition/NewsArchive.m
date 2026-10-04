@@ -40,6 +40,6 @@ void TIONewsArchiveImportLegacy(void){
     NSUInteger checked=0;for(NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:root error:nil]){
         if(++checked>1000)break;if(![[NSUUID alloc]initWithUUIDString:name])continue;
         NSString *p=[root stringByAppendingPathComponent:name];NSDictionary *a=[NSFileManager.defaultManager attributesOfItemAtPath:p error:nil];if(![a[NSFileType] isEqual:NSFileTypeRegular]||[a[NSFileSize] unsignedLongLongValue]>48000)continue;
-        NSString *body=[NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:nil];if(body.length&&body.length<=12000)TIONewsArchiveSave(@"历史提词稿",body);
+        NSString *body=[NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:nil];if(body.length&&body.length<=12000)TIONewsArchiveSave(@"historical script",body);
     }
 }

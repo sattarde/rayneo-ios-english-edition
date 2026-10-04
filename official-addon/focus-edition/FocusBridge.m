@@ -15,22 +15,22 @@ NSDictionary *TFDecodeReply(NSDictionary *e){if(![e isKindOfClass:NSDictionary.c
 }
 + (instancetype)shared{static TFFocusBridge *b;static dispatch_once_t once;dispatch_once(&once,^{b=[self new];});return b;}
 - (NSDictionary *)snapshot{return _snapshot;}
-- (NSString *)note{return _note?:@"眼镜独立计时 · 需要 TFP1 新固件";}
+- (NSString *)note{return _note?:@"Glasses standalone timer · Requires TFP1 firmware";}
 - (BOOL)busy{return _packet!=nil;}
 - (BOOL)ready{return _snapshot&&[_peer isEqual:TIOProtocolDevice()]&&NSProcessInfo.processInfo.systemUptime-_received<20;}
 - (double)remaining{double left=[_snapshot[@"remainingMS"]doubleValue]/1000;if([_snapshot[@"status"]unsignedIntValue]==TF_RUNNING)left-=MAX(0,NSProcessInfo.processInfo.systemUptime-_received);return MAX(0,left);}
 - (void)fail:(NSString *)reason{_pendingOp=_pendingSID=0;_packet=nil;_task=_native=nil;_early=nil;_transport=nil;_snapshot=nil;_note=reason;/* Uncertain native spool ownership: do not unlink. */}
-- (BOOL)setup{NSString *peer=TIOProtocolDevice();if(!peer.length){_note=@"眼镜未连接；已开始的眼镜计时不受影响";return NO;}if(_transport&&[_peer isEqual:peer])return YES;
+- (BOOL)setup{NSString *peer=TIOProtocolDevice();if(!peer.length){_note=@"Glasses not connected; active timer continues on glasses";return NO;}if(_transport&&[_peer isEqual:peer])return YES;
  _peer=[peer copy];_snapshot=nil;NSString *pinned=_peer;NSURL *root=[NSURL fileURLWithPath:[NSHomeDirectory()stringByAppendingPathComponent:@"Library/Application Support/TurboIOPrivateAddon/FocusTFP1"]];
  _transport=[[TFTransport alloc]initWithRoot:root device:_peer currentDevice:^{return TIOProtocolDevice();} call:^BOOL(NSString *method,NSDictionary *args,void(^done)(id)){if(![pinned isEqual:TIOProtocolDevice()])return NO;id plugin=TIOProtocolPlugin();Class cls=NSClassFromString(@"FlutterMethodCall");SEL make=NSSelectorFromString(@"methodCallWithMethodName:arguments:"),handle=NSSelectorFromString(@"handleMethodCall:result:");if(!plugin||![cls respondsToSelector:make]||![plugin respondsToSelector:handle])return NO;@try{id call=((id(*)(id,SEL,id,id))objc_msgSend)(cls,make,method,args);((void(*)(id,SEL,id,id))objc_msgSend)(plugin,handle,call,[done copy]);return YES;}@catch(NSException *e){return NO;}}];
  if(!_timer){__weak typeof(self) w=self;_timer=[NSTimer timerWithTimeInterval:1 repeats:YES block:^(NSTimer *t){[w pump];}];[NSRunLoop.mainRunLoop addTimer:_timer forMode:NSRunLoopCommonModes];}return YES;
 }
 - (void)query{[self perform:TF_QUERY seconds:0 phase:0];}
 - (void)perform:(unsigned)op seconds:(unsigned)seconds phase:(unsigned)phase{NSAssert(NSThread.isMainThread,@"main only");
- if(TIOOTAFlashStatus&&[TIOOTAFlashStatus()[@"stage"]unsignedIntegerValue]!=0){_pendingOp=_pendingSID=0;_note=@"升级保护中，暂不发送番茄命令。请先等眼镜升级完成并回首页，再重新打开 App；也可在眼镜长按停止。";return;}
+ if(TIOOTAFlashStatus&&[TIOOTAFlashStatus()[@"stage"]unsignedIntegerValue]!=0){_pendingOp=_pendingSID=0;_note=@"While the protection is being upgraded, the Tomato command will not be sent for the time being. Please wait until the glasses upgrade is completed and return to the homepage before reopening the app; you can also long press on the glasses to stop.";return;}
  if(self.busy){
-  if(op==TF_STOP&&_op==TF_QUERY){_pendingOp=TF_STOP;_pendingSID=[_snapshot[@"sid"]unsignedIntValue];_note=@"刷新后停止眼镜计时…";}
-  else if(op!=TF_QUERY)_note=@"上一条命令仍在确认，请稍后再操作";
+  if(op==TF_STOP&&_op==TF_QUERY){_pendingOp=TF_STOP;_pendingSID=[_snapshot[@"sid"]unsignedIntValue];_note=@"Stop glasses timing after refreshing...";}
+  else if(op!=TF_QUERY)_note=@"Previous command pending, please wait";
   return;
  }
  if(![self setup])return;
@@ -38,32 +38,32 @@ NSDictionary *TFDecodeReply(NSDictionary *e){if(![e isKindOfClass:NSDictionary.c
   /* Only STOP may continue after a fresh query. Never silently start a timer.
    * A known session must match; a peer change or failed query drops intent. */
   if(op==TF_STOP){_pendingOp=TF_STOP;_pendingSID=[_snapshot[@"sid"]unsignedIntValue];}
-  [self query];if(self.busy)_note=op==TF_STOP?@"刷新后停止眼镜计时…":@"先刷新眼镜计时状态，再操作以免覆盖已有专注";return;
+  [self query];if(self.busy)_note=op==TF_STOP?@"Stop glasses timing after refreshing...":@"Refresh the glasses timing status first, and then operate to avoid overwriting the existing focus.";return;
  }
- uint32_t sid=[_snapshot[@"sid"]unsignedIntValue];if(op==TF_START){uint64_t last=[NSUserDefaults.standardUserDefaults doubleForKey:@"TurboFocusLastSID"],fresh=MAX(MAX(last+1,(uint64_t)NSDate.date.timeIntervalSince1970),(uint64_t)sid+1);if(fresh>UINT32_MAX){_note=@"会话编号已耗尽";return;}sid=(uint32_t)fresh;[NSUserDefaults.standardUserDefaults setDouble:sid forKey:@"TurboFocusLastSID"];}
+ uint32_t sid=[_snapshot[@"sid"]unsignedIntValue];if(op==TF_START){uint64_t last=[NSUserDefaults.standardUserDefaults doubleForKey:@"TurboFocusLastSID"],fresh=MAX(MAX(last+1,(uint64_t)NSDate.date.timeIntervalSince1970),(uint64_t)sid+1);if(fresh>UINT32_MAX){_note=@"Session number exhausted";return;}sid=(uint32_t)fresh;[NSUserDefaults.standardUserDefaults setDouble:sid forKey:@"TurboFocusLastSID"];}
  _sequence=MAX(_sequence,[NSUserDefaults.standardUserDefaults integerForKey:@"TurboFocusCommandSequence"]);
- if(_sequence==UINT32_MAX){_note=@"控制序号已耗尽";return;}
- TFCommand c={.op=op,.sid=op==TF_QUERY?0:sid,.seq=++_sequence,.revision=op==TF_QUERY?0:[_snapshot[@"revision"]unsignedIntValue],.seconds=seconds,.phase=phase};uint8_t b[64];if(!tf_encode(b,sizeof b,&c)){_note=@"无效的番茄时钟参数";return;}
+ if(_sequence==UINT32_MAX){_note=@"The control sequence number has been exhausted";return;}
+ TFCommand c={.op=op,.sid=op==TF_QUERY?0:sid,.seq=++_sequence,.revision=op==TF_QUERY?0:[_snapshot[@"revision"]unsignedIntValue],.seconds=seconds,.phase=phase};uint8_t b[64];if(!tf_encode(b,sizeof b,&c)){_note=@"Invalid Pomodoro parameter";return;}
  [NSUserDefaults.standardUserDefaults setInteger:_sequence forKey:@"TurboFocusCommandSequence"];
- _packet=[NSData dataWithBytes:b length:64];_task=NSUUID.UUID.UUIDString;_native=nil;_early=[NSMutableArray new];_submitted=_ack=_fileDone=NO;_result=TF_OK;_requestSID=c.sid;_op=op;_deadline=NSProcessInfo.processInfo.systemUptime+12;_queried=NSProcessInfo.processInfo.systemUptime;_note=@"正在等待眼镜确认…";NSString *task=_task;__weak typeof(self) w=self;
- [_transport send:_packet task:task submitted:^(BOOL ok,NSString *native){TFFocusBridge *s=w;if(!s||![task isEqual:s->_task])return;if(!ok){[s fail:@"番茄命令提交失败；未确认眼镜状态"];return;}s->_submitted=YES;s->_native=native;NSArray *early=s->_early;s->_early=nil;for(NSDictionary *e in early)[s consume:e];[s finish];}];
+ _packet=[NSData dataWithBytes:b length:64];_task=NSUUID.UUID.UUIDString;_native=nil;_early=[NSMutableArray new];_submitted=_ack=_fileDone=NO;_result=TF_OK;_requestSID=c.sid;_op=op;_deadline=NSProcessInfo.processInfo.systemUptime+12;_queried=NSProcessInfo.processInfo.systemUptime;_note=@"Waiting for glasses confirmation…";NSString *task=_task;__weak typeof(self) w=self;
+ [_transport send:_packet task:task submitted:^(BOOL ok,NSString *native){TFFocusBridge *s=w;if(!s||![task isEqual:s->_task])return;if(!ok){[s fail:@"Tomato command submission failed; glasses status not confirmed"];return;}s->_submitted=YES;s->_native=native;NSArray *early=s->_early;s->_early=nil;for(NSDictionary *e in early)[s consume:e];[s finish];}];
 }
-- (void)finish{if(!_packet||!_submitted||!_ack||!_fileDone)return;unsigned op=_op,result=_result,pending=_pendingOp,sid=_pendingSID;_pendingOp=_pendingSID=0;[_transport cleanup:_task];_packet=nil;_task=_native=nil;_early=nil;_note=result==TF_OK?(op==TF_STOP?@"眼镜已确认停止计时":@"眼镜已确认 · 息屏和断连不结束计时"):[NSString stringWithFormat:@"眼镜拒绝（%u），没有执行本次操作",result];
+- (void)finish{if(!_packet||!_submitted||!_ack||!_fileDone)return;unsigned op=_op,result=_result,pending=_pendingOp,sid=_pendingSID;_pendingOp=_pendingSID=0;[_transport cleanup:_task];_packet=nil;_task=_native=nil;_early=nil;_note=result==TF_OK?(op==TF_STOP?@"The glasses have been confirmed to stop timing":@"Glasses confirmed · Screen pause and disconnection will not end the timer"):[NSString stringWithFormat:@"Glasses rejected (%u), this operation was not performed",result];
  if(pending==TF_STOP&&op==TF_QUERY&&result==TF_OK){
-  if(sid&&sid!=[_snapshot[@"sid"]unsignedIntValue]){_note=@"眼镜已切换到另一轮计时，请确认后再结束";return;}
-  unsigned status=[_snapshot[@"status"]unsignedIntValue];if(status==TF_IDLE||status==TF_STOPPED){_note=@"眼镜当前没有进行中的计时";return;}
+  if(sid&&sid!=[_snapshot[@"sid"]unsignedIntValue]){_note=@"The glasses have switched to another round of timing, please confirm before ending.";return;}
+  unsigned status=[_snapshot[@"status"]unsignedIntValue];if(status==TF_IDLE||status==TF_STOPPED){_note=@"Glasses currently has no active timings";return;}
   [self perform:TF_STOP seconds:0 phase:0];
  }
 }
-- (void)pump{if(_peer&&![_peer isEqual:TIOProtocolDevice()]){[self fail:@"连接变化；重连后刷新，以眼镜状态为准"];return;}NSTimeInterval now=NSProcessInfo.processInfo.systemUptime;if(_packet&&now>=_deadline){[self fail:@"等待眼镜回执超时；请确认已刷入 TFP1，勿重复开始"];return;}unsigned status=[_snapshot[@"status"]unsignedIntValue];if(!_packet&&_snapshot&&(status==TF_RUNNING||status==TF_PAUSED)&&now-_received>=12&&now-_queried>=12)[self query];}
-- (BOOL)consume:(NSDictionary *)e{if(![e isKindOfClass:NSDictionary.class])return NO;NSString *type=e[@"eventType"];if([@[@"fileShareSuccess",@"fileShareFailed"]containsObject:type]){if(!_packet||![e[@"device"]isKindOfClass:NSDictionary.class]||![e[@"device"][@"id"]isEqual:_peer]||![e[@"role"]isEqual:@"sender"])return NO;if(!_native){if(_early.count<8)[_early addObject:e];return NO;}if(![e[@"taskId"]isEqual:_native])return NO;if([type isEqual:@"fileShareFailed"]){[self fail:@"番茄命令传输失败"];return YES;}if(![e[@"fileName"]isEqual:@"turbo-focus.tfp"])return NO;_fileDone=YES;[self finish];return YES;}
- NSDictionary *q=TFDecodeReply(e);if(!q)return NO;if(![e[@"message"][@"deviceId"]isEqual:_peer]||![_peer isEqual:TIOProtocolDevice()])return YES;
+- (void)pump{if(_peer&&![_peer isEqual:TIOProtocolDevice()]){[self fail:@"Connection changes; refreshed after reconnection, subject to glasses status"];return;}NSTimeInterval now=NSProcessInfo.processInfo.systemUptime;if(_packet&&now>=_deadline){[self fail:@"Timeout waiting for the glasses receipt; please confirm that TFP1 has been flashed and do not start again."];return;}unsigned status=[_snapshot[@"status"]unsignedIntValue];if(!_packet&&_snapshot&&(status==TF_RUNNING||status==TF_PAUSED)&&now-_received>=12&&now-_queried>=12)[self query];}
+- (BOOL)consume:(NSDictionary *)e{if(![e isKindOfClass:NSDictionary.class])return NO;NSString *type=e[@"eventType"];if([@[@"fileShareSuccess",@"fileShareFailed"]containsObject:type]){if(!_packet||![e[@"device"]isKindOfClass:NSDictionary.class]||![e[@"device"][@"id"]isEqual:_peer]||![e[@"role"]isEqual:@"sender"])return NO;if(!_native){if(_early.count<8)[_early addObject:e];return NO;}if(![e[@"taskId"]isEqual:_native])return NO;if([type isEqual:@"fileShareFailed"]){[self fail:@"Tomato command transfer failed"];return YES;}if(![e[@"fileName"]isEqual:@"turbo-focus.tfp"])return NO;_fileDone=YES;[self finish];return YES;}
+ NSDictionary *q=TFDecodeReply(e);if(!q)return NO;if(!_peer.length)[self setup];if(![e[@"message"][@"deviceId"]isEqual:_peer]||![_peer isEqual:TIOProtocolDevice()])return YES;
  BOOL matching=_packet&&[q[@"seq"]unsignedIntValue]==_sequence&&[q[@"requestSID"]unsignedIntValue]==_requestSID;
  BOOL update=!_snapshot||[q[@"revision"]unsignedIntValue]>=[_snapshot[@"revision"]unsignedIntValue]||(matching&&_op==TF_QUERY);
  if(update){_snapshot=q;_received=NSProcessInfo.processInfo.systemUptime;}
  if(!matching)return YES;
  _result=[q[@"result"]unsignedIntValue];
- if(_result!=TF_OK){_note=[NSString stringWithFormat:@"眼镜拒绝（%@）；状态已刷新，请检查是否已有计时",q[@"result"]];_ack=YES;[self finish];return YES;}
+ if(_result!=TF_OK){_note=[NSString stringWithFormat:@"Glasses rejected (%@); status has been refreshed, please check if there is a timer",q[@"result"]];_ack=YES;[self finish];return YES;}
  _ack=YES;[self finish];return YES;
 }
 @end
